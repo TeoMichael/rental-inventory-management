@@ -18,6 +18,8 @@ GitHub push: unavailable because no remote is configured. Live Firebase verifica
 
 Status: Complete.
 
+Commit: `df1f2dc` — `feat: add tenancy and inspection workflow`.
+
 Implemented tenancy forms/history/filters, immutable check-in/check-out snapshots, tenant confirmation, photo records, and comparison with changed conditions/quantities highlighted. One check-in and one check-out are allowed per tenancy. Property and email are fixed after tenancy creation to protect historical identity.
 
 Validation: ESLint and production build passed; 21 domain/service tests passed. Browser verified creating an Active tenancy using native date controls, saving check-in, enforcing verification for a tenant account, confirming check-in, editing live condition from Good to Damaged, recording check-out, and showing the original Good snapshot in comparison. The changes-only filter passed. The 14 emulator authorization tests cover immutable records, tenant confirmation restrictions, and atomic snapshot behavior.
@@ -26,7 +28,13 @@ GitHub push: pending remote configuration.
 
 ## Phase 3 — Damage reports, dashboard & UX
 
-Status: Implementation in progress; not yet committed.
+Status: Complete; commit follows validation.
+
+Implemented tenant damage reporting with photo evidence, landlord status/notes management, status filters, and a live dashboard. Dashboard counts derive from current records, with pending actions, recent activity, property summaries, and tenant-specific next steps. Mobile navigation, inventory cards, forms, and filters were reviewed at a 390 × 844 viewport.
+
+Validation: browser verified tenant photo upload/report creation, landlord transition to Repairing with repair notes, status filtering, and dashboard counts (one property, one inventory unit, one active tenant, one damaged unit, one open report). Check-in confirmation is reflected in pending counts. Mobile forms remain scrollable within the viewport; inventory filters use two columns for readable options. ESLint and production build passed before the phase commit.
+
+GitHub push: pending remote configuration.
 
 ## Phase 4 — Security, testing & final MVP review
 

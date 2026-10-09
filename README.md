@@ -31,8 +31,10 @@ Without Firebase configuration the app displays setup instructions. With the emu
 - Responsive navigation, mobile inventory cards, validation, empty states, and request errors.
 - Tenancy creation/editing, status filters, contact details, and historical agreements.
 - Immutable check-in/check-out item snapshots, verified tenant confirmation, and before/after comparison with changes highlighted.
+- Tenant damage reports with supporting photographs, landlord status updates, notes, and status filters.
+- Live dashboard counts, pending actions, recent activity, and property summaries scoped to the signed-in role.
 
-The remaining phases finalize damage reporting, dashboard statistics, and workflow verification. See [development progress](docs/development-progress.md).
+See [development progress](docs/development-progress.md) for phase commits and verification results.
 
 ## Verification
 
@@ -64,7 +66,18 @@ Landlords access records by immutable owner ID. Tenant access requires a verifie
 
 ## Project status
 
-The workspace initially had no repository, remote, or Firebase configuration. Development is on local `main`. GitHub pushes and live project validation require a remote URL, available GitHub authentication, and Firebase configuration.
+The core inventory, tenancy, inspection, damage-reporting, and dashboard workflows are implemented on local `main`. Final security hardening and documentation review are in progress. GitHub pushes require a remote URL and available GitHub authentication. Production Firebase validation requires the project's public Web configuration; current browser verification uses local emulators.
+
+## Known limitations
+
+- Deletion archives records; there is no restore interface or automatic storage cleanup. Removing a photo keeps historical evidence. Failed or canceled forms can leave unattached Storage files.
+- One immutable check-in and one check-out are supported per tenancy, with at most 400 inventory records in each inspection.
+- Tenancy email/property are fixed after creation. Statuses and dates are managed manually. Email is required to link a tenant account.
+- Tenant access requires a verified matching email. Previously obtained Firebase download URLs remain usable by anyone holding the URL.
+- The client supplies timestamps and snapshot text; trusted audit timestamps, complete server-side snapshot enforcement, and expiring image links require a backend.
+- Production email delivery, domain setup, Storage integration, and real mobile camera capture need verification in a configured Firebase project.
+
+These choices and access boundaries are explained in [database design](docs/database-design.md).
 
 ## Future improvements
 
