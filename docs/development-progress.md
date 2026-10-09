@@ -6,6 +6,8 @@ Started 9 October 2026. The workspace was empty, without Git history, a remote, 
 
 Status: Complete.
 
+Commit: `a2f4ec5` — `feat: complete core property inventory system`.
+
 Implemented authentication, protected role-aware workspace, property/room/item CRUD with safe archives, Firebase data access, photo uploads/previews/camera input, search/filtering, responsive UI, validation, and environment examples. Firestore/Storage rules and emulator test infrastructure are included from the start.
 
 Validation: ESLint passed with no warnings; production build and TypeScript passed; 21 domain/service tests and 14 Firestore/Storage emulator tests passed. Browser verified landlord registration, property creation/detail, room creation, item creation, and an actual Storage upload with preview. Browser testing found and fixed missing registration profile IDs and accessible form-label inconsistencies.
@@ -14,7 +16,13 @@ GitHub push: unavailable because no remote is configured. Live Firebase verifica
 
 ## Phase 2 — Tenancy & inspection workflow
 
-Status: UI and service implementation in progress; not yet committed.
+Status: Complete.
+
+Implemented tenancy forms/history/filters, immutable check-in/check-out snapshots, tenant confirmation, photo records, and comparison with changed conditions/quantities highlighted. One check-in and one check-out are allowed per tenancy. Property and email are fixed after tenancy creation to protect historical identity.
+
+Validation: ESLint and production build passed; 21 domain/service tests passed. Browser verified creating an Active tenancy using native date controls, saving check-in, enforcing verification for a tenant account, confirming check-in, editing live condition from Good to Damaged, recording check-out, and showing the original Good snapshot in comparison. The changes-only filter passed. The 14 emulator authorization tests cover immutable records, tenant confirmation restrictions, and atomic snapshot behavior.
+
+GitHub push: pending remote configuration.
 
 ## Phase 3 — Damage reports, dashboard & UX
 

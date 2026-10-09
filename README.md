@@ -22,15 +22,17 @@ Fill in the `NEXT_PUBLIC_FIREBASE_*` values using your Firebase web-app configur
 
 Without Firebase configuration the app displays setup instructions. With the emulator flag enabled, accounts and records stay in the local demo project. A successful unconfigured build does not prove a live Firebase connection.
 
-## Implemented foundation
+## Implemented features
 
 - Registration, login, logout, password reset, landlord/tenant roles, and tenant email verification.
 - Property, room, and inventory create/read/update/delete workflows. Deletion archives records to preserve history.
 - Category, condition, quantity, estimated value, search, and room/property filters.
 - Multiple image uploads, previews, mobile camera input, and soft photo removal.
 - Responsive navigation, mobile inventory cards, validation, empty states, and request errors.
+- Tenancy creation/editing, status filters, contact details, and historical agreements.
+- Immutable check-in/check-out item snapshots, verified tenant confirmation, and before/after comparison with changes highlighted.
 
-The next phases add tenancy and inspection screens, damage reporting, dashboard statistics, and final workflow verification. See [development progress](docs/development-progress.md).
+The remaining phases finalize damage reporting, dashboard statistics, and workflow verification. See [development progress](docs/development-progress.md).
 
 ## Verification
 
