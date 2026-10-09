@@ -21,7 +21,7 @@ export type Activity = {
 export function recentActivity(data: WorkspaceData): Activity[] {
   const propertyName = (id: string) =>
     data.properties.find((property) => property.id === id)?.name ??
-    "Archived property";
+    "Previous property";
   const entries: Activity[] = [
     ...data.properties.map((property) => ({
       id: `property-${property.id}`,

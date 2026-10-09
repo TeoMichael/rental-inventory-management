@@ -43,7 +43,7 @@ const links = [
   { href: "/damage", label: "Damage reports", icon: Wrench, tenant: true },
 ];
 function WorkspaceFrame({ children }: { children: ReactNode }) {
-  const { profile, data, error, loading } = useWorkspace();
+  const { profile, data, error, loading, online, retry } = useWorkspace();
   const { logout } = useAuth();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -144,10 +144,15 @@ function WorkspaceFrame({ children }: { children: ReactNode }) {
             </span>
           </div>
           <div className="topbar-right">
-            <span className="live-dot" />
-            {process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === "true"
-              ? "Local emulator"
-              : "Connected to Firebase"}
+            <span
+              className="live-dot"
+              style={{ backgroundColor: online ? undefined : "#94a3b8" }}
+            />
+            {!online
+              ? "Offline · reconnect to refresh"
+              : process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === "true"
+                ? "Local emulator"
+                : "Firebase workspace"}
             <div className="avatar small">
               {profile.name.slice(0, 1).toUpperCase()}
             </div>
@@ -155,6 +160,11 @@ function WorkspaceFrame({ children }: { children: ReactNode }) {
         </header>
         <main className="main-content">
           <ErrorMessage message={error || logoutError} />
+          {error && (
+            <Button variant="secondary" onClick={retry}>
+              Retry connection
+            </Button>
+          )}
           {loading && (
             <div className="loading-strip" role="status">
               Loading your workspace…
@@ -193,15 +203,53 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (firebaseConfigured && !loading && !user) router.replace("/login");
-  }, [loading, user, router]);
+    if (firebaseConfigured && !loading && !user && !error)
+      router.replace("/login");
+  }, [loading, user, error, router]);
   if (!firebaseConfigured) return <SetupScreen />;
+  if (error)
+    return (
+      <div className="center-screen">
+        <div className="card verification-card">
+          <h2>Your account could not be loaded.</h2>
+          <ErrorMessage message={status || error} />
+          <p>Check your connection and try again.</p>
+          <div className="form-actions">
+            <Button onClick={() => window.location.reload()}>Try again</Button>
+            {user && (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await logout();
+                  } catch (cause) {
+                    setStatus(friendlyError(cause));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Sign out
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   if (loading || !user)
     return (
       <div className="center-screen">
         <div className="spinner" />
         <p>Opening your workspace…</p>
-        <ErrorMessage message={error} />
+        <p className="text-muted text-sm">
+          Waiting for your account connection. Check your connection if this
+          takes a while.
+        </p>
+        <Button variant="secondary" onClick={() => window.location.reload()}>
+          Reload
+        </Button>
       </div>
     );
   if (!profile)

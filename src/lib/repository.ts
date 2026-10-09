@@ -3,20 +3,14 @@ import {
   doc,
   getDoc,
   getDocs,
-  onSnapshot,
   query,
   runTransaction,
   where,
-  type DocumentData,
-  type DocumentReference,
-  type DocumentSnapshot,
-  type Transaction,
-  type Unsubscribe,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebase } from "./firebase";
+import { friendlyError } from "./format";
 import {
-  EMPTY_WORKSPACE,
   type BaseRecord,
   type DamageInput,
   type DamageReport,
@@ -28,13 +22,13 @@ import {
   type Photo,
   type Profile,
   type Property,
+  type PropertyAccess,
   type PropertyInput,
   type Room,
   type RoomInput,
   type SnapshotInput,
   type Tenancy,
   type TenancyInput,
-  type WorkspaceData,
 } from "./types";
 import {
   MAX_INSPECTION_ITEMS,
@@ -49,217 +43,15 @@ import {
   validateTenancy,
 } from "./validation";
 
-function now(): string {
-  return new Date().toISOString();
-}
-function requireSession(profile: Profile, role?: Profile["role"]): void {
-  const user = getFirebase().auth.currentUser;
-  if (!user || user.uid !== profile.id)
-    throw new Error("Your session expired. Please sign in again.");
-  if (role && profile.role !== role)
-    throw new Error(
-      role === "landlord"
-        ? "Only landlords can make this change."
-        : "Only tenants can perform this action.",
-    );
-  if (
-    profile.role === "tenant" &&
-    (!user.emailVerified ||
-      user.email?.toLowerCase() !== profile.email.toLowerCase())
-  )
-    throw new Error("Verify your email address before accessing your tenancy.");
-}
-
-function record<T>(snapshot: DocumentSnapshot<DocumentData>, label: string): T {
-  if (!snapshot.exists())
-    throw new Error(`${label} could not be found. It may have been removed.`);
-  return { ...snapshot.data(), id: snapshot.id } as T;
-}
-
-function requireOwner<T extends BaseRecord>(
-  value: T,
-  profile: Profile,
-  label: string,
-  active = true,
-): T {
-  if (value.ownerId !== profile.id)
-    throw new Error(`You do not have permission to manage this ${label}.`);
-  if (active && value.archived)
-    throw new Error(`This ${label} has been archived.`);
-  return value;
-}
-
-async function owned<T extends BaseRecord>(
-  transaction: Transaction,
-  reference: DocumentReference,
-  profile: Profile,
-  label: string,
-  active = true,
-): Promise<T> {
-  return requireOwner(
-    record<T>(await transaction.get(reference), label),
-    profile,
-    label,
-    active,
-  );
-}
-
-function base(profile: Profile, id: string, timestamp: string): BaseRecord {
-  return {
-    id,
-    ownerId: profile.id,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    archived: false,
-  };
-}
-
-/** Flat, owner-scoped listeners; tenants get only their email-scoped history and granted inventory. */
-export function subscribeWorkspace(
-  profile: Profile,
-  onData: (data: WorkspaceData) => void,
-  onError: (error: Error) => void,
-): Unsubscribe {
-  requireSession(profile);
-  const { db } = getFirebase();
-  const data: WorkspaceData = structuredClone(EMPTY_WORKSPACE);
-  const subscriptions: Unsubscribe[] = [];
-  let inventorySubscriptions: Unsubscribe[] = [];
-  let inventoryGeneration = 0;
-  let closed = false;
-  const publish = () => {
-    if (!closed) onData({ ...data });
-  };
-  const clearInventory = () => {
-    ++inventoryGeneration;
-    inventorySubscriptions.forEach((unsubscribe) => unsubscribe());
-    inventorySubscriptions = [];
-    data.properties = [];
-    data.rooms = [];
-    data.items = [];
-  };
-  const fail = (key: keyof WorkspaceData, error: Error) => {
-    if (closed) return;
-    if (
-      profile.role === "tenant" &&
-      ["properties", "rooms", "items"].includes(key)
-    )
-      clearInventory();
-    else (data[key] as unknown[]) = [];
-    publish();
-    onError(error);
-  };
-  const watch = (key: keyof WorkspaceData, field: string, value: string) => {
-    subscriptions.push(
-      onSnapshot(
-        query(collection(db, key), where(field, "==", value)),
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (closed) return;
-          // Tenant data is displayed only after the server has checked this query's permissions.
-          if (profile.role === "tenant" && snapshot.metadata.fromCache) {
-            (data[key] as unknown[]) = [];
-            publish();
-            return;
-          }
-          (data[key] as unknown[]) = snapshot.docs.map((entry) => ({
-            ...entry.data(),
-            id: entry.id,
-          }));
-          publish();
-        },
-        (error) => fail(key, error),
-      ),
-    );
-  };
-  if (profile.role === "landlord") {
-    for (const key of Object.keys(EMPTY_WORKSPACE) as (keyof WorkspaceData)[])
-      watch(key, "ownerId", profile.id);
-  } else {
-    const email = normalizeEmail(profile.email);
-    for (const key of [
-      "tenancies",
-      "inspections",
-      "inspectionItems",
-      "damageReports",
-    ] as const)
-      watch(key, "tenantEmail", email);
-    subscriptions.push(
-      onSnapshot(
-        query(
-          collection(db, "properties"),
-          where("tenantEmails", "array-contains", email),
-          where("archived", "==", false),
-        ),
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (closed) return;
-          if (snapshot.metadata.fromCache) {
-            clearInventory();
-            publish();
-            return;
-          }
-          const generation = ++inventoryGeneration;
-          inventorySubscriptions.forEach((unsubscribe) => unsubscribe());
-          inventorySubscriptions = [];
-          data.properties = snapshot.docs.map(
-            (entry) => ({ ...entry.data(), id: entry.id }) as Property,
-          );
-          data.rooms = [];
-          data.items = [];
-          const ids = data.properties
-            .filter((property) => !property.archived)
-            .map((property) => property.id);
-          for (const key of ["rooms", "items"] as const) {
-            const chunks = new Map<number, DocumentData[]>();
-            // Rules resolve the user's profile plus each parent property (10 reads per query).
-            for (let index = 0; index < ids.length; index += 9) {
-              const offset = index;
-              inventorySubscriptions.push(
-                onSnapshot(
-                  query(
-                    collection(db, key),
-                    where("propertyId", "in", ids.slice(index, index + 9)),
-                  ),
-                  { includeMetadataChanges: true },
-                  (entries) => {
-                    if (closed || generation !== inventoryGeneration) return;
-                    if (entries.metadata.fromCache) {
-                      chunks.delete(offset);
-                      (data[key] as unknown[]) = [...chunks.values()].flat();
-                      publish();
-                      return;
-                    }
-                    chunks.set(
-                      offset,
-                      entries.docs.map((entry) => ({
-                        ...entry.data(),
-                        id: entry.id,
-                      })),
-                    );
-                    (data[key] as unknown[]) = [...chunks.values()].flat();
-                    publish();
-                  },
-                  (error) => {
-                    if (!closed && generation === inventoryGeneration)
-                      fail(key, error);
-                  },
-                ),
-              );
-            }
-          }
-          publish();
-        },
-        (error) => fail("properties", error),
-      ),
-    );
-  }
-  return () => {
-    closed = true;
-    subscriptions.forEach((unsubscribe) => unsubscribe());
-    inventorySubscriptions.forEach((unsubscribe) => unsubscribe());
-  };
-}
+import {
+  base,
+  now,
+  owned,
+  record,
+  requireOwner,
+  requireSession,
+} from "./repository-core";
+export { subscribeWorkspace } from "./workspace";
 
 export async function saveProperty(
   profile: Profile,
@@ -280,7 +72,6 @@ export async function saveProperty(
     transaction.set(reference, {
       ...(existing ?? base(profile, reference.id, timestamp)),
       ...values,
-      tenantEmails: existing?.tenantEmails ?? [],
       updatedAt: timestamp,
     });
   });
@@ -365,6 +156,11 @@ async function archive(
   await runTransaction(db, async (transaction) => {
     const reference = doc(db, key, value.id);
     await owned(transaction, reference, profile, key.slice(0, -1));
+    const accessReference =
+      key === "properties" ? doc(db, "propertyAccess", value.id) : null;
+    const accessSnapshot = accessReference
+      ? await transaction.get(accessReference)
+      : null;
     if (key === "properties") {
       // Tenancy saves write this property too, so simultaneous grants force a retry.
       const entries = await getDocs(
@@ -404,11 +200,19 @@ async function archive(
           );
       }
     }
+    const timestamp = now();
     transaction.update(reference, {
       archived: true,
-      updatedAt: now(),
-      ...(key === "properties" ? { tenantEmails: [] } : {}),
+      updatedAt: timestamp,
     });
+    if (accessReference)
+      transaction.set(accessReference, {
+        id: value.id,
+        ownerId: profile.id,
+        tenantEmails: [],
+        createdAt: accessSnapshot?.data()?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      } satisfies PropertyAccess);
   });
 }
 
@@ -481,7 +285,7 @@ export async function uploadPhotos(
     }
     return uploaded;
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "Please try again.";
+    const reason = friendlyError(error);
     // Stored evidence cannot be physically deleted by clients. Nothing is attached to a record on failure.
     throw new Error(
       `Photo upload failed. ${reason}${storedCount ? " Uploaded files were retained in Storage but were not attached; please retry your selection." : ""}`,
@@ -519,6 +323,8 @@ export async function saveTenancy(
       "property",
       false,
     );
+    const accessReference = doc(db, "propertyAccess", values.propertyId);
+    const accessSnapshot = await transaction.get(accessReference);
     if (
       property.archived &&
       (!id || values.status === "Upcoming" || values.status === "Active")
@@ -566,10 +372,14 @@ export async function saveTenancy(
       ...values,
       updatedAt: timestamp,
     });
-    transaction.update(propertyReference, {
-      tenantEmails: [...emails].sort(),
+    transaction.set(accessReference, {
+      id: values.propertyId,
+      ownerId: profile.id,
+      tenantEmails: property.archived ? [] : [...emails].sort(),
+      createdAt: accessSnapshot.data()?.createdAt ?? timestamp,
       updatedAt: timestamp,
-    });
+    } satisfies PropertyAccess);
+    transaction.update(propertyReference, { updatedAt: timestamp });
   });
   return reference.id;
 }
@@ -650,6 +460,15 @@ export async function createInspection(
             profile,
             "room",
           ),
+        );
+      const room = rooms.get(item.roomId)!;
+      if (
+        item.name !== snapshot.itemName ||
+        room.name !== snapshot.roomName ||
+        item.quantity !== snapshot.quantity
+      )
+        throw new Error(
+          "Inventory changed while you were reviewing this inspection. Close the form, reopen it, and review the updated items before saving.",
         );
     }
     const timestamp = now();

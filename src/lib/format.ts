@@ -24,6 +24,9 @@ export function friendlyError(error: unknown) {
       : "";
   const errors: Record<string, string> = {
     "auth/invalid-credential": "The email or password is incorrect.",
+    "auth/wrong-password": "The email or password is incorrect.",
+    "auth/user-not-found": "The email or password is incorrect.",
+    "auth/user-disabled": "This account is disabled.",
     "auth/email-already-in-use":
       "An account already uses this email. Please sign in.",
     "auth/weak-password": "Use a password with at least 8 characters.",
@@ -38,6 +41,9 @@ export function friendlyError(error: unknown) {
       "Access denied. Check your account permissions and deployed Firebase rules.",
     "storage/unauthorized":
       "Photo upload denied. Check your tenancy and Storage rules.",
+    "storage/retry-limit-exceeded":
+      "Photo upload could not finish. Check your connection and try again.",
+    "storage/canceled": "Photo upload was canceled. Please try again.",
     unavailable:
       "Firebase is unavailable. Check your connection and try again.",
   };

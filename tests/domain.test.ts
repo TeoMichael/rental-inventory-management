@@ -9,48 +9,152 @@ import {
   validateSnapshot,
   validateTenancy,
 } from "../src/lib/validation";
-import type { Inspection, ItemInput, Photo, Profile, Property, SnapshotInput, Tenancy, TenancyInput, WorkspaceData } from "../src/lib/types";
-import { archiveProperty, createInspection, saveItem, saveTenancy, subscribeWorkspace } from "../src/lib/repository";
+import type {
+  Inspection,
+  ItemInput,
+  Photo,
+  Profile,
+  Property,
+  SnapshotInput,
+  Tenancy,
+  TenancyInput,
+  WorkspaceData,
+} from "../src/lib/types";
+import {
+  archiveProperty,
+  createInspection,
+  saveItem,
+  saveProperty,
+  saveTenancy,
+  subscribeWorkspace,
+} from "../src/lib/repository";
 
 type TestReference = { path: string; id: string };
 type TestFilter = { field: string; operator: string; value: unknown };
 type TestQuery = { path: string; filters: TestFilter[] };
-type TestSnapshot = { docs: ReturnType<typeof documentSnapshot>[]; metadata: { fromCache: boolean } };
-type TestListener = { query: TestQuery; options: { includeMetadataChanges: boolean }; next: (snapshot: TestSnapshot) => void; error: (error: Error) => void; stopped: boolean };
+type TestSnapshot = {
+  docs: ReturnType<typeof documentSnapshot>[];
+  metadata: { fromCache: boolean };
+};
+type TestDocumentSnapshot = ReturnType<typeof documentSnapshot> & {
+  metadata: { fromCache: boolean };
+};
+type TestListener = {
+  query: TestQuery | TestReference;
+  options: { includeMetadataChanges: boolean };
+  next: (snapshot: TestSnapshot | TestDocumentSnapshot) => void;
+  error: (error: Error) => void;
+  stopped: boolean;
+};
 function documentSnapshot(path: string, value?: Record<string, unknown>) {
-  return { id: path.split("/").at(-1)!, ref: { path, id: path.split("/").at(-1)! }, exists: () => value !== undefined, data: () => value === undefined ? undefined : structuredClone(value) };
+  return {
+    id: path.split("/").at(-1)!,
+    ref: { path, id: path.split("/").at(-1)! },
+    exists: () => value !== undefined,
+    data: () => (value === undefined ? undefined : structuredClone(value)),
+  };
 }
 const harness = vi.hoisted(() => ({
-  records: new Map<string, Record<string, unknown>>(), listeners: [] as TestListener[],
-  services: { auth: { currentUser: { uid: "owner-1", email: "owner@example.com", emailVerified: true } }, db: {}, storage: {} },
+  records: new Map<string, Record<string, unknown>>(),
+  listeners: [] as TestListener[],
+  services: {
+    auth: {
+      currentUser: {
+        uid: "owner-1",
+        email: "owner@example.com",
+        emailVerified: true,
+      },
+    },
+    db: {},
+    storage: {},
+  },
   nextId: 0,
 }));
 vi.mock("../src/lib/firebase", () => ({ getFirebase: () => harness.services }));
-vi.mock("firebase/storage", () => ({ getDownloadURL: vi.fn(), ref: vi.fn(), uploadBytes: vi.fn() }));
+vi.mock("firebase/storage", () => ({
+  getDownloadURL: vi.fn(),
+  ref: vi.fn(),
+  uploadBytes: vi.fn(),
+}));
 vi.mock("firebase/firestore", () => ({
   collection: (_db: unknown, path: string) => ({ path }),
   doc: (source: { path?: string }, ...parts: string[]): TestReference => {
-    const path = source.path ? `${source.path}/${parts[0] ?? `auto-${++harness.nextId}`}` : parts.join("/");
+    const path = source.path
+      ? `${source.path}/${parts[0] ?? `auto-${++harness.nextId}`}`
+      : parts.join("/");
     return { path, id: path.split("/").at(-1)! };
   },
-  where: (field: string, operator: string, value: unknown): TestFilter => ({ field, operator, value }),
-  query: (source: { path: string }, ...filters: TestFilter[]): TestQuery => ({ path: source.path, filters }),
-  getDocs: async (query: TestQuery) => ({ docs: [...harness.records].filter(([path, data]) => path.split("/")[0] === query.path && query.filters.every((filter) => filter.operator === "==" && data[filter.field] === filter.value)).map(([path, value]) => documentSnapshot(path, value)) }),
-  onSnapshot: (query: TestQuery, options: TestListener["options"], next: TestListener["next"], error: TestListener["error"]) => {
-    const listener: TestListener = { query, options, next, error, stopped: false };
+  where: (field: string, operator: string, value: unknown): TestFilter => ({
+    field,
+    operator,
+    value,
+  }),
+  query: (source: { path: string }, ...filters: TestFilter[]): TestQuery => ({
+    path: source.path,
+    filters,
+  }),
+  getDocs: async (query: TestQuery) => ({
+    docs: [...harness.records]
+      .filter(
+        ([path, data]) =>
+          path.split("/")[0] === query.path &&
+          query.filters.every(
+            (filter) =>
+              filter.operator === "==" && data[filter.field] === filter.value,
+          ),
+      )
+      .map(([path, value]) => documentSnapshot(path, value)),
+  }),
+  onSnapshot: (
+    query: TestQuery | TestReference,
+    options: TestListener["options"],
+    next: TestListener["next"],
+    error: TestListener["error"],
+  ) => {
+    const listener: TestListener = {
+      query,
+      options,
+      next,
+      error,
+      stopped: false,
+    };
     harness.listeners.push(listener);
-    return () => { listener.stopped = true; };
+    return () => {
+      listener.stopped = true;
+    };
   },
-  runTransaction: async (_db: unknown, callback: (transaction: unknown) => Promise<void>) => {
+  runTransaction: async (
+    _db: unknown,
+    callback: (transaction: unknown) => Promise<void>,
+  ) => {
     const pending: (() => void)[] = [];
     let writing = false;
     await callback({
       get: async (reference: TestReference) => {
-        if (writing) throw new Error("Firestore transactions require reads before writes.");
-        return documentSnapshot(reference.path, harness.records.get(reference.path));
+        if (writing)
+          throw new Error(
+            "Firestore transactions require reads before writes.",
+          );
+        return documentSnapshot(
+          reference.path,
+          harness.records.get(reference.path),
+        );
       },
-      set: (reference: TestReference, value: Record<string, unknown>) => { writing = true; const frozen = structuredClone(value); pending.push(() => harness.records.set(reference.path, frozen)); },
-      update: (reference: TestReference, values: Record<string, unknown>) => { writing = true; const frozen = structuredClone(values); pending.push(() => harness.records.set(reference.path, { ...harness.records.get(reference.path), ...frozen })); },
+      set: (reference: TestReference, value: Record<string, unknown>) => {
+        writing = true;
+        const frozen = structuredClone(value);
+        pending.push(() => harness.records.set(reference.path, frozen));
+      },
+      update: (reference: TestReference, values: Record<string, unknown>) => {
+        writing = true;
+        const frozen = structuredClone(values);
+        pending.push(() =>
+          harness.records.set(reference.path, {
+            ...harness.records.get(reference.path),
+            ...frozen,
+          }),
+        );
+      },
     });
     pending.forEach((commit) => commit());
   },
@@ -219,28 +323,94 @@ describe("historical snapshots and photos", () => {
   });
 });
 
-const owner: Profile = { id: "owner-1", name: "Owner", email: "owner@example.com", role: "landlord", createdAt: "2026-01-01T00:00:00.000Z" };
-const tenantProfile: Profile = { ...owner, id: "tenant-1", name: "Jamie", email: "jamie@example.com", role: "tenant" };
-const recordBase = { ownerId: owner.id, createdAt: owner.createdAt, updatedAt: owner.createdAt, archived: false };
-const property: Property = { ...recordBase, id: "property-1", name: "River House", address: "", description: "", propertyType: "House", tenantEmails: [tenantProfile.email] };
-const activeTenancy: Tenancy = { ...recordBase, ...tenancy, id: "tenancy-1", tenantEmail: tenantProfile.email };
-function seed(path: string, value: object) { harness.records.set(path, structuredClone(value) as Record<string, unknown>); }
-function emit(listener: TestListener, records: Record<string, unknown>[], fromCache = false) {
-  listener.next({ docs: records.map((value) => documentSnapshot(`${listener.query.path}/${value.id}`, value)), metadata: { fromCache } });
+const owner: Profile = {
+  id: "owner-1",
+  name: "Owner",
+  email: "owner@example.com",
+  role: "landlord",
+  createdAt: "2026-01-01T00:00:00.000Z",
+};
+const tenantProfile: Profile = {
+  ...owner,
+  id: "tenant-1",
+  name: "Jamie",
+  email: "jamie@example.com",
+  role: "tenant",
+};
+const recordBase = {
+  ownerId: owner.id,
+  createdAt: owner.createdAt,
+  updatedAt: owner.createdAt,
+  archived: false,
+};
+const property: Property = {
+  ...recordBase,
+  id: "property-1",
+  name: "River House",
+  address: "",
+  description: "",
+  propertyType: "House",
+};
+const activeTenancy: Tenancy = {
+  ...recordBase,
+  ...tenancy,
+  id: "tenancy-1",
+  tenantEmail: tenantProfile.email,
+};
+function seed(path: string, value: object) {
+  harness.records.set(path, structuredClone(value) as Record<string, unknown>);
 }
-function listenerFor(path: string): TestListener { return harness.listeners.filter((listener) => listener.query.path === path && !listener.stopped).at(-1)!; }
+function emit(
+  listener: TestListener,
+  records: Record<string, unknown>[],
+  fromCache = false,
+) {
+  listener.next({
+    docs: records.map((value) =>
+      documentSnapshot(`${listener.query.path}/${value.id}`, value),
+    ),
+    metadata: { fromCache },
+  });
+}
+function emitDocument(
+  listener: TestListener,
+  value: Record<string, unknown> | undefined,
+  fromCache = false,
+) {
+  listener.next({
+    ...documentSnapshot(listener.query.path, value),
+    metadata: { fromCache },
+  });
+}
+function grantTenantProperty(value: Property = property) {
+  emit(listenerFor("tenancies"), [{ ...activeTenancy, propertyId: value.id }]);
+  emitDocument(listenerFor(`properties/${value.id}`), { ...value });
+}
+function listenerFor(path: string): TestListener {
+  return harness.listeners
+    .filter((listener) => listener.query.path === path && !listener.stopped)
+    .at(-1)!;
+}
 
 describe("workspace listener authorization and lifecycle", () => {
   beforeEach(() => {
     harness.listeners.length = 0;
-    harness.services.auth.currentUser = { uid: tenantProfile.id, email: tenantProfile.email, emailVerified: true };
+    harness.services.auth.currentUser = {
+      uid: tenantProfile.id,
+      email: tenantProfile.email,
+      emailVerified: true,
+    };
   });
 
   it("clears granted inventory immediately on an authorization error", () => {
     const output: WorkspaceData[] = [];
     const errors: Error[] = [];
-    const stop = subscribeWorkspace(tenantProfile, (value) => output.push(value), (error) => errors.push(error));
-    emit(listenerFor("properties"), [{ ...property }]);
+    const stop = subscribeWorkspace(
+      tenantProfile,
+      (value) => output.push(value),
+      (error) => errors.push(error),
+    );
+    grantTenantProperty();
     const items = listenerFor("items");
     emit(items, [{ ...recordBase, ...item, id: "item-1" }]);
     expect(output.at(-1)!.items).toHaveLength(1);
@@ -255,11 +425,15 @@ describe("workspace listener authorization and lifecycle", () => {
   it("ignores callbacks from replaced inventory listeners and from a closed workspace", () => {
     const output: WorkspaceData[] = [];
     const errors: Error[] = [];
-    const stop = subscribeWorkspace(tenantProfile, (value) => output.push(value), (error) => errors.push(error));
-    const properties = listenerFor("properties");
-    emit(properties, [{ ...property }]);
+    const stop = subscribeWorkspace(
+      tenantProfile,
+      (value) => output.push(value),
+      (error) => errors.push(error),
+    );
+    const tenancies = listenerFor("tenancies");
+    grantTenantProperty();
     const oldItems = listenerFor("items");
-    emit(properties, [{ ...property, id: "property-2" }]);
+    grantTenantProperty({ ...property, id: "property-2" });
     const count = output.length;
     emit(oldItems, [{ ...item, id: "stale-item" }]);
     oldItems.error(new Error("old permission-denied"));
@@ -267,19 +441,29 @@ describe("workspace listener authorization and lifecycle", () => {
     expect(errors).toHaveLength(0);
     expect(output.at(-1)!.properties[0].id).toBe("property-2");
     stop();
-    emit(properties, [{ ...property }]);
+    emit(tenancies, [{ ...activeTenancy }]);
     expect(output).toHaveLength(count);
   });
 
   it("does not expose cached tenant grants until the server authorizes them", () => {
     const output: WorkspaceData[] = [];
-    const stop = subscribeWorkspace(tenantProfile, (value) => output.push(value), () => {});
-    const properties = listenerFor("properties");
-    expect(properties.options.includeMetadataChanges).toBe(true);
-    emit(properties, [{ ...property }], true);
+    const stop = subscribeWorkspace(
+      tenantProfile,
+      (value) => output.push(value),
+      () => {},
+    );
+    const tenancies = listenerFor("tenancies");
+    expect(tenancies.options.includeMetadataChanges).toBe(true);
+    emit(tenancies, [{ ...activeTenancy }], true);
     expect(output.at(-1)!.properties).toHaveLength(0);
-    expect(harness.listeners.some((listener) => listener.query.path === "items")).toBe(false);
-    emit(properties, [{ ...property }]);
+    expect(
+      harness.listeners.some((listener) => listener.query.path === "items"),
+    ).toBe(false);
+    emit(tenancies, [{ ...activeTenancy }]);
+    const properties = listenerFor("properties/property-1");
+    emitDocument(properties, { ...property }, true);
+    expect(output.at(-1)!.properties).toHaveLength(0);
+    emitDocument(properties, { ...property });
     const items = listenerFor("items");
     emit(items, [{ ...item, id: "item-1" }], true);
     expect(output.at(-1)!.items).toHaveLength(0);
@@ -290,25 +474,112 @@ describe("workspace listener authorization and lifecycle", () => {
 
   it("rejects an unverified tenant before creating subscriptions", () => {
     harness.services.auth.currentUser.emailVerified = false;
-    expect(() => subscribeWorkspace(tenantProfile, () => {}, () => {})).toThrow("Verify your email");
+    expect(() =>
+      subscribeWorkspace(
+        tenantProfile,
+        () => {},
+        () => {},
+      ),
+    ).toThrow("Verify your email");
     expect(harness.listeners).toHaveLength(0);
+  });
+
+  it("revokes live data when the tenancy ends while retaining the tenant's history", () => {
+    const output: WorkspaceData[] = [];
+    const errors: Error[] = [];
+    const stop = subscribeWorkspace(
+      tenantProfile,
+      (value) => output.push(value),
+      (error) => errors.push(error),
+    );
+    grantTenantProperty();
+    const oldProperty = listenerFor("properties/property-1");
+    const oldItems = listenerFor("items");
+    emit(oldItems, [{ ...item, id: "item-1" }]);
+    emit(listenerFor("tenancies"), [{ ...activeTenancy, status: "Completed" }]);
+    expect(output.at(-1)!.properties).toHaveLength(0);
+    expect(output.at(-1)!.items).toHaveLength(0);
+    expect(output.at(-1)!.tenancies[0].status).toBe("Completed");
+    const count = output.length;
+    emitDocument(oldProperty, { ...property });
+    emit(oldItems, [{ ...item, id: "stale" }]);
+    oldProperty.error(new Error("late permission-denied"));
+    expect(output).toHaveLength(count);
+    expect(errors).toHaveLength(0);
+    stop();
   });
 
   it("clears only the failed owner collection and caps tenant property query chunks", () => {
     const output: WorkspaceData[] = [];
-    harness.services.auth.currentUser = { uid: owner.id, email: owner.email, emailVerified: true };
-    const stopOwner = subscribeWorkspace(owner, (value) => output.push(value), () => {});
+    harness.services.auth.currentUser = {
+      uid: owner.id,
+      email: owner.email,
+      emailVerified: true,
+    };
+    const stopOwner = subscribeWorkspace(
+      owner,
+      (value) => output.push(value),
+      () => {},
+    );
     emit(listenerFor("properties"), [{ ...property }]);
     emit(listenerFor("items"), [{ ...item, id: "item-1" }]);
     listenerFor("items").error(new Error("network error"));
     expect(output.at(-1)!.items).toHaveLength(0);
     expect(output.at(-1)!.properties).toHaveLength(1);
     stopOwner();
-    harness.services.auth.currentUser = { uid: tenantProfile.id, email: tenantProfile.email, emailVerified: true };
-    const stopTenant = subscribeWorkspace(tenantProfile, () => {}, () => {});
-    emit(listenerFor("properties"), Array.from({ length: 20 }, (_, index) => ({ ...property, id: `property-${index}` })));
-    const chunks = harness.listeners.filter((listener) => listener.query.path === "items" && !listener.stopped).map((listener) => (listener.query.filters[0].value as string[]).length);
-    expect(chunks).toEqual([9, 9, 2]);
+    harness.services.auth.currentUser = {
+      uid: tenantProfile.id,
+      email: tenantProfile.email,
+      emailVerified: true,
+    };
+    const stopTenant = subscribeWorkspace(
+      tenantProfile,
+      () => {},
+      () => {},
+    );
+    const candidates = Array.from({ length: 10 }, (_, index) => ({
+      ...property,
+      id: `property-${index}`,
+    }));
+    emit(
+      listenerFor("tenancies"),
+      candidates.map((value, index) => ({
+        ...activeTenancy,
+        id: `tenancy-${index}`,
+        propertyId: value.id,
+      })),
+    );
+    for (const value of candidates)
+      emitDocument(listenerFor(`properties/${value.id}`), { ...value });
+    const queries = harness.listeners.filter(
+      (listener) => listener.query.path === "items" && !listener.stopped,
+    );
+    const chunks = queries.map(
+      (listener) =>
+        ((listener.query as TestQuery).filters[0].value as string[]).length,
+    );
+    expect(chunks).toEqual([4, 4, 2]);
+    expect(
+      queries.every((listener) =>
+        (listener.query as TestQuery).filters.some(
+          (filter) => filter.field === "archived" && filter.value === false,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      harness.listeners.some(
+        (listener) => listener.query.path === "propertyAccess",
+      ),
+    ).toBe(false);
+    expect(
+      harness.listeners.some(
+        (listener) =>
+          "filters" in listener.query &&
+          listener.query.filters.some(
+            (filter) => filter.field === "tenantEmails",
+          ),
+      ),
+    ).toBe(false);
     stopTenant();
   });
 });
@@ -317,56 +588,219 @@ describe("service data integrity with atomic transaction doubles", () => {
   beforeEach(() => {
     harness.records.clear();
     harness.nextId = 0;
-    harness.services.auth.currentUser = { uid: owner.id, email: owner.email, emailVerified: true };
+    harness.services.auth.currentUser = {
+      uid: owner.id,
+      email: owner.email,
+      emailVerified: true,
+    };
     seed("properties/property-1", property);
-    seed("rooms/room-1", { ...recordBase, id: "room-1", propertyId: property.id, name: "Kitchen", description: "" });
+    seed("propertyAccess/property-1", {
+      id: property.id,
+      ownerId: owner.id,
+      tenantEmails: [tenantProfile.email],
+      createdAt: owner.createdAt,
+      updatedAt: owner.createdAt,
+    });
+    seed("rooms/room-1", {
+      ...recordBase,
+      id: "room-1",
+      propertyId: property.id,
+      name: "Kitchen",
+      description: "",
+    });
     seed("items/item-1", { ...recordBase, ...item, id: "item-1" });
     seed("tenancies/tenancy-1", activeTenancy);
   });
 
   it("refuses property archival while a current tenancy exists without losing records", async () => {
-    await expect(archiveProperty(owner, property)).rejects.toThrow("Complete or cancel");
+    await expect(archiveProperty(owner, property)).rejects.toThrow(
+      "Complete or cancel",
+    );
     expect(harness.records.get("properties/property-1")!.archived).toBe(false);
     expect(harness.records.has("items/item-1")).toBe(true);
-    await saveTenancy(owner, { ...tenancy, tenantEmail: tenantProfile.email, status: "Completed" }, activeTenancy.id);
+    await saveTenancy(
+      owner,
+      { ...tenancy, tenantEmail: tenantProfile.email, status: "Completed" },
+      activeTenancy.id,
+    );
     await archiveProperty(owner, property);
     expect(harness.records.get("properties/property-1")!.archived).toBe(true);
-    expect(harness.records.get("properties/property-1")!.tenantEmails).toEqual([]);
+    expect(
+      harness.records.get("propertyAccess/property-1")!.tenantEmails,
+    ).toEqual([]);
+    expect(
+      "tenantEmails" in harness.records.get("properties/property-1")!,
+    ).toBe(false);
     expect(harness.records.has("tenancies/tenancy-1")).toBe(true);
   });
 
   it("revokes inventory only after the last current tenancy for the email ends", async () => {
-    seed("tenancies/tenancy-2", { ...activeTenancy, id: "tenancy-2", status: "Upcoming" });
-    await saveTenancy(owner, { ...tenancy, tenantEmail: tenantProfile.email, status: "Completed" }, activeTenancy.id);
-    expect(harness.records.get("properties/property-1")!.tenantEmails).toEqual([tenantProfile.email]);
-    await saveTenancy(owner, { ...tenancy, tenantEmail: tenantProfile.email, status: "Cancelled" }, "tenancy-2");
-    expect(harness.records.get("properties/property-1")!.tenantEmails).toEqual([]);
-    expect(harness.records.size).toBe(5);
+    seed("tenancies/tenancy-2", {
+      ...activeTenancy,
+      id: "tenancy-2",
+      status: "Upcoming",
+    });
+    await saveTenancy(
+      owner,
+      { ...tenancy, tenantEmail: tenantProfile.email, status: "Completed" },
+      activeTenancy.id,
+    );
+    expect(
+      harness.records.get("propertyAccess/property-1")!.tenantEmails,
+    ).toEqual([tenantProfile.email]);
+    await saveTenancy(
+      owner,
+      { ...tenancy, tenantEmail: tenantProfile.email, status: "Cancelled" },
+      "tenancy-2",
+    );
+    expect(
+      harness.records.get("propertyAccess/property-1")!.tenantEmails,
+    ).toEqual([]);
+    expect(harness.records.size).toBe(6);
+  });
+
+  it("writes authorization emails only to the private projection and creates missing grants", async () => {
+    const id = await saveProperty(owner, {
+      name: "Private invitations",
+      address: "",
+      description: "",
+      propertyType: "House",
+    });
+    expect("tenantEmails" in harness.records.get(`properties/${id}`)!).toBe(
+      false,
+    );
+    harness.records.delete("propertyAccess/property-1");
+    await saveTenancy(
+      owner,
+      { ...tenancy, tenantEmail: tenantProfile.email },
+      activeTenancy.id,
+    );
+    const access = harness.records.get("propertyAccess/property-1")!;
+    expect(Object.keys(access).sort()).toEqual([
+      "createdAt",
+      "id",
+      "ownerId",
+      "tenantEmails",
+      "updatedAt",
+    ]);
+    expect(access.tenantEmails).toEqual([tenantProfile.email]);
+    expect(access.updatedAt).toBe(
+      harness.records.get("tenancies/tenancy-1")!.updatedAt,
+    );
+    expect(access.updatedAt).toBe(
+      harness.records.get("properties/property-1")!.updatedAt,
+    );
+    expect(
+      "tenantEmails" in harness.records.get("properties/property-1")!,
+    ).toBe(false);
   });
 
   it("preserves authoritative historical identity and photos after current inventory changes", async () => {
-    const input: SnapshotInput = { itemId: "item-1", itemName: "Stale form name", roomName: "Stale room", quantity: 99, condition: "Good", notes: "No dents", photos: [{ ...photo }] };
-    const inspectionId = await createInspection(owner, activeTenancy, "check-in", [input]);
+    const input: SnapshotInput = {
+      itemId: "item-1",
+      itemName: item.name,
+      roomName: "Kitchen",
+      quantity: 1,
+      condition: "Good",
+      notes: "No dents",
+      photos: [{ ...photo }],
+    };
+    const inspectionId = await createInspection(
+      owner,
+      activeTenancy,
+      "check-in",
+      [input],
+    );
     expect(inspectionId).toBe("tenancy-1_check-in");
     input.photos[0].name = "mutated.jpg";
-    await saveItem(owner, { ...item, name: "Replacement refrigerator", condition: "Damaged" }, "item-1");
-    const snapshot = harness.records.get("inspectionItems/tenancy-1_check-in_item-1")!;
+    await saveItem(
+      owner,
+      { ...item, name: "Replacement refrigerator", condition: "Damaged" },
+      "item-1",
+    );
+    const snapshot = harness.records.get(
+      "inspectionItems/tenancy-1_check-in_item-1",
+    )!;
     expect(snapshot.itemName).toBe("Refrigerator");
     expect(snapshot.roomName).toBe("Kitchen");
     expect(snapshot.quantity).toBe(1);
     expect(snapshot.condition).toBe("Good");
     expect((snapshot.photos as Photo[])[0].name).toBe("photo.jpg");
-    await expect(createInspection(owner, activeTenancy, "check-in", [input])).rejects.toThrow("cannot be overwritten");
-    expect(harness.records.get("inspections/tenancy-1_check-in")!.itemCount).toBe(1);
+    await expect(
+      createInspection(owner, activeTenancy, "check-in", [input]),
+    ).rejects.toThrow("cannot be overwritten");
+    expect(
+      harness.records.get("inspections/tenancy-1_check-in")!.itemCount,
+    ).toBe(1);
   });
 
+  it.each(["item name", "room name", "quantity"])(
+    "rejects a concurrently changed reviewed %s without saving a mixed snapshot",
+    async (field) => {
+      const input: SnapshotInput = {
+        itemId: "item-1",
+        itemName: item.name,
+        roomName: "Kitchen",
+        quantity: 1,
+        condition: "Damaged",
+        notes: "Inspection notes are intentionally editable",
+        photos: [{ ...photo }],
+      };
+      if (field === "item name")
+        seed("items/item-1", {
+          ...harness.records.get("items/item-1"),
+          name: "Replacement refrigerator",
+        });
+      if (field === "room name")
+        seed("rooms/room-1", {
+          ...harness.records.get("rooms/room-1"),
+          name: "Utility room",
+        });
+      if (field === "quantity")
+        seed("items/item-1", {
+          ...harness.records.get("items/item-1"),
+          quantity: 2,
+        });
+      await expect(
+        createInspection(owner, activeTenancy, "check-in", [input]),
+      ).rejects.toThrow("Close the form, reopen it");
+      expect(
+        [...harness.records.keys()].some(
+          (path) =>
+            path.startsWith("inspections/") ||
+            path.startsWith("inspectionItems/"),
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("rejects invalid handover ordering and duplicate item identities atomically", async () => {
-    const input: SnapshotInput = { itemId: "item-1", itemName: item.name, roomName: "Kitchen", quantity: 1, condition: "Good", notes: "", photos: [] };
-    await expect(createInspection(owner, activeTenancy, "check-out", [input])).rejects.toThrow("check-in inspection before");
-    await expect(createInspection(owner, activeTenancy, "check-in", [input, input])).rejects.toThrow("only once");
-    expect([...harness.records.keys()].some((path) => path.startsWith("inspections/"))).toBe(false);
-    const id = await createInspection(owner, activeTenancy, "check-in", [input]);
-    const parent = harness.records.get(`inspections/${id}`) as unknown as Inspection;
+    const input: SnapshotInput = {
+      itemId: "item-1",
+      itemName: item.name,
+      roomName: "Kitchen",
+      quantity: 1,
+      condition: "Good",
+      notes: "",
+      photos: [],
+    };
+    await expect(
+      createInspection(owner, activeTenancy, "check-out", [input]),
+    ).rejects.toThrow("check-in inspection before");
+    await expect(
+      createInspection(owner, activeTenancy, "check-in", [input, input]),
+    ).rejects.toThrow("only once");
+    expect(
+      [...harness.records.keys()].some((path) =>
+        path.startsWith("inspections/"),
+      ),
+    ).toBe(false);
+    const id = await createInspection(owner, activeTenancy, "check-in", [
+      input,
+    ]);
+    const parent = harness.records.get(
+      `inspections/${id}`,
+    ) as unknown as Inspection;
     const snapshot = harness.records.get(`inspectionItems/${id}_item-1`)!;
     expect(snapshot.inspectedAt).toBe(parent.inspectedAt);
     expect(snapshot.createdAt).toBe(parent.createdAt);

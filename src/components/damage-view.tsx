@@ -168,7 +168,7 @@ export default function DamageView() {
               <p className="text-muted text-sm mt-1">
                 {data.properties.find(
                   (property) => property.id === report.propertyId,
-                )?.name ?? "Archived property"}
+                )?.name ?? "Previous property"}
               </p>
               <p className="text-sm line-clamp-3 mt-4 whitespace-pre-wrap">
                 {report.description}
@@ -416,7 +416,7 @@ function DamageDetail({
             <p className="text-muted">
               {data.properties.find(
                 (property) => property.id === report.propertyId,
-              )?.name ?? "Archived property"}
+              )?.name ?? "Previous property"}
             </p>
             <p className="text-muted text-sm mt-1">
               Reported {formatDate(report.createdAt)}

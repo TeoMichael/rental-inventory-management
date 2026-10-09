@@ -11,7 +11,8 @@ service firebase.storage {
     }
     function tenantReader(propertyId) {
       let property = firestore.get(/databases/(default)/documents/properties/$(propertyId)).data;
-      return tenant() && property.archived == false && request.auth.token.email in property.tenantEmails;
+      let access = firestore.get(/databases/(default)/documents/propertyAccess/$(propertyId)).data;
+      return tenant() && property.archived == false && request.auth.token.email in access.tenantEmails;
     }
     function tenantUploader(propertyId) {
       let tenancy = firestore.get(/databases/(default)/documents/tenancies/$(request.resource.metadata.tenancyId)).data;

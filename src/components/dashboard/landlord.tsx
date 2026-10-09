@@ -51,7 +51,7 @@ export function LandlordDashboard() {
   const activity = recentActivity(data);
   const propertyName = (id: string) =>
     data.properties.find((property) => property.id === id)?.name ??
-    "Archived property";
+    "Previous property";
 
   return (
     <>

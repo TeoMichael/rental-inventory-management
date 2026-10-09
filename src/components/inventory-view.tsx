@@ -432,7 +432,7 @@ export default function InventoryView({
                     <td>
                       <span>
                         {data.properties.find((p) => p.id === item.propertyId)
-                          ?.name ?? "Archived property"}
+                          ?.name ?? "Previous property"}
                       </span>
                       <small>
                         {data.rooms.find((r) => r.id === item.roomId)?.name ??
@@ -471,14 +471,16 @@ export default function InventoryView({
             <EmptyState
               icon={Package}
               title={
-                search || room || category || condition
+                search || propertyFilter || room || category || condition
                   ? "No items match your filters"
                   : "A clear record starts here"
               }
               description={
-                landlord
-                  ? "Add rooms to a property, then record its furniture, appliances, and household items."
-                  : "Your landlord’s inventory will appear here when your tenancy is linked."
+                search || propertyFilter || room || category || condition
+                  ? "Try another search or change the filters to find your items."
+                  : landlord
+                    ? "Add rooms to a property, then record its furniture, appliances, and household items."
+                    : "Your landlord’s inventory will appear here when your tenancy is linked."
               }
               action={
                 landlord && (

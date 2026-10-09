@@ -44,7 +44,14 @@ export interface Property extends BaseRecord {
   address: string;
   description: string;
   propertyType: string;
+}
+/** Private authorization projection; never included in tenant-readable property records. */
+export interface PropertyAccess {
+  id: string;
+  ownerId: string;
   tenantEmails: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 export interface Room extends BaseRecord {
   propertyId: string;

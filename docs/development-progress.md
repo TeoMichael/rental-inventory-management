@@ -28,7 +28,9 @@ GitHub push: pending remote configuration.
 
 ## Phase 3 — Damage reports, dashboard & UX
 
-Status: Complete; commit follows validation.
+Status: Complete.
+
+Commit: `993acbc` — `feat: add damage reporting dashboard and responsive UX`.
 
 Implemented tenant damage reporting with photo evidence, landlord status/notes management, status filters, and a live dashboard. Dashboard counts derive from current records, with pending actions, recent activity, property summaries, and tenant-specific next steps. Mobile navigation, inventory cards, forms, and filters were reviewed at a 390 × 844 viewport.
 
@@ -38,8 +40,22 @@ GitHub push: pending remote configuration.
 
 ## Phase 4 — Security, testing & final MVP review
 
-Status: Security tests started; final review pending.
+Status: Complete.
+
+Commit: `chore: harden security testing and MVP documentation` — final phase commit on `main` (see `git log -1 --oneline`).
+
+Separated private invitation grants from tenant-readable properties, enforced archived-inventory denial and check-out ordering, and revised tenant listeners to clear revoked/cached data. Added guarded auth callbacks, reconnect/retry behavior, friendly upload/auth errors, and explicit account-load failures. Split inspection and dashboard screens into focused modules. Reviewed archival dependencies, image retention, query/index limits, and historical snapshots.
+
+Validation: ESLint, standalone TypeScript, production build, and all 26 domain/service tests passed. The 17 Firestore/Storage authorization tests passed, including private grants, verification, cross-owner access, archived inventory, immutable snapshots, atomic 400-item inspections, check-out ordering, confirmation tampering, damage-report integrity, image MIME/size validation, and overwrite/deletion denial. Regression tests also reject concurrent changes to reviewed item/room names or quantities.
+
+Final browser checks verified assigned tenant inventory and photos, landlord repair notes visible to the tenant, Completed tenancy revoking live inventory while retaining confirmed inspections/reports, and restoring Active access. Room removal with inventory and property removal with an Active tenancy both reject with clear messages. The Good-to-Damaged comparison and original images remain readable after completion. Mobile inventory filters/cards, scrollable forms, and empty filter states passed. Logged-out access returns to login. The final preview is left on the landlord dashboard with an Active synthetic tenancy.
+
+Diff review found no tracked local configuration or secrets. Actual environment values, emulator exports, screenshots, and diagnostic files are ignored. Known limits and production setup steps are documented in README and the database/Firebase guides.
+
+GitHub push: unavailable because no remote is configured. Production Firebase checks require public Web-app configuration.
 
 ## Environment notes
 
-Node.js 24 and Java 25 are available. npm is absent from PATH; the bundled pnpm and direct Node script entry points execute equivalent lint/build/test checks. The filesystem sandbox prevents Node resolving some Windows junctions, so local tool execution uses the authorized unsandboxed process context. A temporary host connection interruption delayed commands; source files were preserved, and interrupted writes were resumed after reconnection.
+Node.js 24 and Java 25 are available. npm is absent from PATH; the bundled pnpm and direct Node script entry points execute equivalent lint/build/test checks. Earlier restricted execution could not resolve some Windows dependency junctions; verification uses the available full-access runtime. Source files and completed commits were preserved across host interruptions.
+
+An emulator temporary-directory collision and later runtime interruption lost only the synthetic browser demo's in-memory history. The scenario was recreated with the original Auth identities and restored sofa image URL. The final demo uses its own Storage temporary directory and has an ignored full export under `.firebase/demo-export`. No production Firebase project was connected.

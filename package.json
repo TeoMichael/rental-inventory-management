@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "format": "prettier --write src tests docs *.json *.ts *.mjs README.md",
+    "format": "prettier --write src tests docs *.json *.ts *.mts *.mjs README.md",
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:rules": "firebase emulators:exec --project demo-rental-inventory --only firestore,storage \"vitest run --config vitest.rules.config.ts\""
+    "test:rules": "firebase emulators:exec --project demo-rental-rules --only firestore,storage \"vitest run --config vitest.rules.config.mts\""
   },
   "dependencies": {
     "firebase": "13.0.0",

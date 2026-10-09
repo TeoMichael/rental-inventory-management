@@ -31,7 +31,7 @@ npx firebase login
 npx firebase deploy --project YOUR_PROJECT_ID --only firestore:rules,firestore:indexes,storage
 ```
 
-The repository does not select a production project implicitly. `firebase.json` points to `firestore.rules`, `firestore.indexes.json`, and `storage.rules`. During the first Storage deployment, Firebase may ask to authorize Storage Rules to access Firestore; approve that product integration for this project. Wait for the composite index to finish building before exercising tenant property queries.
+The repository does not select a production project implicitly. `firebase.json` points to `firestore.rules`, `firestore.indexes.json`, and `storage.rules`. During the first Storage deployment, Firebase may ask to authorize Storage Rules to access Firestore; approve that product integration for this project. Wait for the inventory composite indexes to finish building before exercising tenant room/item queries.
 
 Use the committed rules rather than open test-mode rules. Landlord access is scoped by immutable `ownerId`; tenant data requires verified matching email. New tenants must register with the exact email invited by the landlord and verify the email before accessing inventory, confirming check-in, or reporting damage. Refresh the app's verification state after following the emailed verification link.
 
@@ -39,11 +39,11 @@ Use the committed rules rather than open test-mode rules. Landlord access is sco
 
 Install a current Java runtime supported by Firebase's Firestore emulator (Java 21 or later) and keep `java` on `PATH`. The first run downloads emulator binaries and requires network access. The repository binds local emulators to loopback only:
 
-| Service | Address |
-| --- | --- |
+| Service        | Address          |
+| -------------- | ---------------- |
 | Authentication | `127.0.0.1:9099` |
-| Firestore | `127.0.0.1:8080` |
-| Storage | `127.0.0.1:9199` |
+| Firestore      | `127.0.0.1:8080` |
+| Storage        | `127.0.0.1:9199` |
 
 Start all three when manually exercising the app:
 
@@ -65,13 +65,19 @@ NEXT_PUBLIC_USE_FIREBASE_EMULATORS=true
 
 These values target a `demo-` project and do not authorize production access. The Authentication emulator prints email verification links in its terminal output. Emulators do not persist data across runs unless explicitly started with import/export options. Never enable `NEXT_PUBLIC_USE_FIREBASE_EMULATORS` for a deployed site.
 
+To retain a local demo, start with `--export-on-exit .firebase/demo-export` and later add `--import .firebase/demo-export`. Export needs a graceful shutdown; an interrupted process can lose in-memory records. Keep exports outside Git because they may contain account and record data.
+
 ## Rule verification
 
 ```sh
 npm run test:rules
 ```
 
-This command starts only the Firestore and Storage emulators with `demo-rental-inventory`, runs Vitest authorization tests, then shuts the emulators down. It does not need real project credentials. Avoid another emulator instance using the same ports. The tests cover unauthorized reads/writes, ownership and role tampering, tenant email verification, parent consistency, archival, atomic snapshots, tenant confirmation, damage-report integrity, and Storage upload validation/retention.
+This command starts only the Firestore and Storage emulators with the isolated `demo-rental-rules` test project, runs Vitest authorization tests, then shuts the emulators down. It does not need real project credentials. Avoid another emulator instance using the same ports. The tests clear only that test project's Firestore data and Storage bucket. They cover unauthorized reads/writes, private invitation lists, archived inventory, ownership and role tampering, tenant email verification, parent consistency, atomic snapshots, check-out ordering, tenant confirmation, damage-report integrity, and Storage upload validation/retention.
+
+When emulators are already running with `--project demo-rental-rules`, use `npx vitest run --config vitest.rules.config.mts` directly rather than starting another instance. Stop the manual app's `demo-rental-inventory` emulator instance before starting the rules suite on the same ports; export its demo data first if you want to keep it. Storage rules perform Firestore lookups, so the test project ID must match the emulator CLI's project ID for cross-service checks. Separate projects alone do not isolate those cross-service lookups within one running Storage emulator.
+
+Avoid parallel Storage emulator instances even on different ports: Firebase CLI 15.33 uses a shared temporary blob directory, which an instance removes on shutdown. Separate instances need separate process `TEMP`/`TMP` directories.
 
 Unit tests, lint, and a production build are separate checks. Emulator tests validate deployed-rule behavior, not billing, production domain setup, email delivery, real-camera behavior, or production Storage integration. Perform those checks in a configured Firebase project before deployment.
 

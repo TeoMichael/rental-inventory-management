@@ -184,7 +184,7 @@ export default function TenanciesView() {
                 <p className="mt-4 text-sm font-medium">
                   {data.properties.find(
                     (property) => property.id === tenancy.propertyId,
-                  )?.name ?? "Archived property"}
+                  )?.name ?? "Previous property"}
                 </p>
                 <p className="text-muted text-sm mt-1">
                   {formatDate(tenancy.startDate)} –{" "}
@@ -231,7 +231,7 @@ export default function TenanciesView() {
                     <td>
                       {data.properties.find(
                         (property) => property.id === tenancy.propertyId,
-                      )?.name ?? "Archived property"}
+                      )?.name ?? "Previous property"}
                     </td>
                     <td className="whitespace-nowrap">
                       {formatDate(tenancy.startDate)}
@@ -279,7 +279,7 @@ export default function TenanciesView() {
             <span className="text-muted">
               {data.properties.find(
                 (property) => property.id === selected.propertyId,
-              )?.name ?? "Archived property"}
+              )?.name ?? "Previous property"}
             </span>
             <Badge tone={statusTone(selected.status)}>{selected.status}</Badge>
           </div>

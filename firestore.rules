@@ -13,13 +13,14 @@ service cloud.firestore {
     function owns(data) { return landlord() && data.ownerId == request.auth.uid; }
     function readable(data) { return owns(data) || tenantEmail(data.tenantEmail); }
     function propertyPath(id) { return /databases/$(database)/documents/properties/$(id); }
+    function accessPath(id) { return /databases/$(database)/documents/propertyAccess/$(id); }
     function propertyOwner(id) { return owns(get(propertyPath(id)).data); }
     function activePropertyOwner(id) {
       return propertyOwner(id) && get(propertyPath(id)).data.archived == false;
     }
     function propertyReader(id) {
       return propertyOwner(id) || (tenant()
-        && request.auth.token.email in get(propertyPath(id)).data.tenantEmails
+        && request.auth.token.email in get(accessPath(id)).data.tenantEmails
         && get(propertyPath(id)).data.archived == false);
     }
     function text(value, max) { return value is string && value.size() <= max; }
@@ -64,9 +65,14 @@ service cloud.firestore {
     }
     function propertyValid(data, id) {
       return base(data, id)
-        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'name', 'address', 'description', 'propertyType', 'tenantEmails'])
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'name', 'address', 'description', 'propertyType'])
         && requiredText(data.name, 200) && text(data.address, 500) && text(data.description, 5000)
-        && requiredText(data.propertyType, 100) && data.tenantEmails is list && data.tenantEmails.size() <= 200;
+        && requiredText(data.propertyType, 100);
+    }
+    function accessValid(data, id) {
+      return data.keys().hasOnly(['id', 'ownerId', 'tenantEmails', 'createdAt', 'updatedAt'])
+        && data.id == id && data.ownerId == request.auth.uid && iso(data.createdAt) && iso(data.updatedAt)
+        && data.tenantEmails is list && data.tenantEmails.size() <= 200;
     }
     function roomValid(data, id) {
       return base(data, id)
@@ -97,7 +103,7 @@ service cloud.firestore {
     }
     function tenancyGrant(data) {
       return !(data.status in ['Upcoming', 'Active']) || data.archived
-        || data.tenantEmail in getAfter(propertyPath(data.propertyId)).data.tenantEmails;
+        || data.tenantEmail in getAfter(accessPath(data.propertyId)).data.tenantEmails;
     }
     function inspectionValid(data, id) {
       return base(data, id)
@@ -162,18 +168,27 @@ service cloud.firestore {
         && requiredText(request.resource.data.name, 120);
     }
     match /properties/{id} {
-      allow read: if owns(resource.data) || (tenant() && request.auth.token.email in resource.data.tenantEmails && resource.data.archived == false);
-      allow create: if initial(request.resource.data, id) && propertyValid(request.resource.data, id) && request.resource.data.tenantEmails.size() == 0;
+      allow read: if owns(resource.data) || (tenant() && propertyReader(id));
+      allow create: if initial(request.resource.data, id) && propertyValid(request.resource.data, id);
       allow update: if owns(resource.data) && stable(request.resource.data) && propertyValid(request.resource.data, id);
     }
+    match /propertyAccess/{id} {
+      // Owners can also read an absent grant when a transaction prepares its first invitation.
+      // Tenants never read this document directly; rules inspect it without exposing other invitees.
+      allow get: if propertyOwner(id);
+      allow create: if owns(getAfter(propertyPath(id)).data) && accessValid(request.resource.data, id);
+      allow update: if propertyOwner(id) && accessValid(request.resource.data, id)
+        && request.resource.data.id == resource.data.id && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt;
+    }
     match /rooms/{id} {
-      allow read: if owns(resource.data) || propertyReader(resource.data.propertyId);
+      allow read: if owns(resource.data) || (resource.data.archived == false && propertyReader(resource.data.propertyId));
       allow create: if initial(request.resource.data, id) && roomValid(request.resource.data, id) && activePropertyOwner(request.resource.data.propertyId);
       allow update: if owns(resource.data) && stable(request.resource.data) && roomValid(request.resource.data, id)
         && request.resource.data.propertyId == resource.data.propertyId && activePropertyOwner(resource.data.propertyId);
     }
     match /items/{id} {
-      allow read: if owns(resource.data) || propertyReader(resource.data.propertyId);
+      allow read: if owns(resource.data) || (resource.data.archived == false && propertyReader(resource.data.propertyId));
       allow create: if initial(request.resource.data, id) && itemValid(request.resource.data, id)
         && activePropertyOwner(request.resource.data.propertyId) && itemRoom(request.resource.data);
       allow update: if owns(resource.data) && stable(request.resource.data) && itemValid(request.resource.data, id)
@@ -193,6 +208,8 @@ service cloud.firestore {
       allow read: if readable(resource.data);
       allow create: if initial(request.resource.data, id) && inspectionValid(request.resource.data, id)
         && activePropertyOwner(request.resource.data.propertyId) && inspectionTenancy(request.resource.data)
+        && (request.resource.data.type == 'check-in'
+          || exists(/databases/$(database)/documents/inspections/$(request.resource.data.tenancyId + '_check-in')))
         && request.resource.data.confirmed == false && request.resource.data.confirmedAt == null && request.resource.data.confirmedBy == null;
       allow update: if tenantEmail(resource.data.tenantEmail) && resource.data.type == 'check-in'
         && resource.data.confirmed == false

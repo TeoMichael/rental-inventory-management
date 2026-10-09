@@ -17,17 +17,23 @@ const base = (id: string, ownerId = "owner-a") => ({
   updatedAt: timestamp,
   archived: false,
 });
-const property = (
-  id: string,
-  ownerId = "owner-a",
-  tenantEmails: string[] = [],
-) => ({
+const property = (id: string, ownerId = "owner-a") => ({
   ...base(id, ownerId),
   name: "Garden apartment",
   address: "1 Garden Street",
   description: "",
   propertyType: "Apartment",
+});
+const access = (
+  id: string,
+  ownerId = "owner-a",
+  tenantEmails: string[] = [],
+) => ({
+  id,
+  ownerId,
   tenantEmails,
+  createdAt: timestamp,
+  updatedAt: timestamp,
 });
 const room = (id: string, propertyId = "property-a", ownerId = "owner-a") => ({
   ...base(id, ownerId),
@@ -127,15 +133,15 @@ async function createHandover(type = "check-in") {
 
 beforeAll(async () => {
   environment = await initializeTestEnvironment({
-    projectId: "demo-rental-inventory",
+    projectId: "demo-rental-rules",
     firestore: {
       host: "127.0.0.1",
-      port: 8080,
+      port: Number(process.env.RULES_FIRESTORE_PORT ?? "8080"),
       rules: readFileSync("firestore.rules", "utf8"),
     },
     storage: {
       host: "127.0.0.1",
-      port: 9199,
+      port: Number(process.env.RULES_STORAGE_PORT ?? "9199"),
       rules: readFileSync("storage.rules", "utf8"),
     },
   });
@@ -143,8 +149,15 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await environment.clearFirestore();
-  await environment.clearStorage();
   await environment.withSecurityRulesDisabled(async (context) => {
+    // Clean only this test project's bucket; never reset a concurrently running app's images.
+    const bucketRoot = context.storage().ref();
+    async function clearPrefix(prefix: typeof bucketRoot): Promise<void> {
+      const listing = await prefix.listAll();
+      await Promise.all(listing.items.map((entry) => entry.delete()));
+      for (const child of listing.prefixes) await clearPrefix(child);
+    }
+    await clearPrefix(bucketRoot);
     const db = context.firestore();
     const batch = db.batch();
     for (const [id, role, email] of [
@@ -161,13 +174,18 @@ beforeEach(async () => {
         createdAt: timestamp,
       });
     }
-    batch.set(
-      db.doc("properties/property-a"),
-      property("property-a", "owner-a", [tenantEmail]),
-    );
+    batch.set(db.doc("properties/property-a"), property("property-a"));
     batch.set(
       db.doc("properties/property-b"),
       property("property-b", "owner-b"),
+    );
+    batch.set(
+      db.doc("propertyAccess/property-a"),
+      access("property-a", "owner-a", [tenantEmail]),
+    );
+    batch.set(
+      db.doc("propertyAccess/property-b"),
+      access("property-b", "owner-b"),
     );
     batch.set(db.doc("rooms/room-a"), room("room-a"));
     batch.set(db.doc("rooms/room-b"), room("room-b", "property-b", "owner-b"));
@@ -246,15 +264,21 @@ describe("private inventory and immutable identity", () => {
 
   it("requires verified, assigned tenants and constrains tenant inventory queries", async () => {
     const db = tenantDb();
+    await assertSucceeds(db.doc("properties/property-a").get());
+    await assertFails(db.collection("properties").get());
     await assertSucceeds(
       db
-        .collection("properties")
-        .where("tenantEmails", "array-contains", tenantEmail)
+        .collection("rooms")
+        .where("propertyId", "in", ["property-a"])
         .where("archived", "==", false)
         .get(),
     );
     await assertSucceeds(
-      db.collection("rooms").where("propertyId", "in", ["property-a"]).get(),
+      db
+        .collection("items")
+        .where("propertyId", "in", ["property-a"])
+        .where("archived", "==", false)
+        .get(),
     );
     await assertSucceeds(db.doc("items/item-a").get());
     await assertFails(db.doc("items/item-b").get());
@@ -280,7 +304,7 @@ describe("private inventory and immutable identity", () => {
     };
     await assertFails(db.doc("tenancies/tenancy-new").set(newTenancy));
     const batch = db.batch();
-    batch.update(db.doc("properties/property-a"), {
+    batch.update(db.doc("propertyAccess/property-a"), {
       tenantEmails: [tenantEmail, "new@example.com"],
     });
     batch.set(db.doc("tenancies/tenancy-new"), newTenancy);
@@ -299,12 +323,76 @@ describe("private inventory and immutable identity", () => {
   });
 });
 
+describe("private membership and archived inventory", () => {
+  it("keeps invitation lists private and protects grant ownership", async () => {
+    const db = ownerDb();
+    await assertSucceeds(db.doc("propertyAccess/property-a").get());
+    await assertFails(tenantDb().doc("propertyAccess/property-a").get());
+    await assertFails(tenantDb().collection("propertyAccess").get());
+    await assertFails(
+      tenantDb()
+        .doc("propertyAccess/property-a")
+        .update({ tenantEmails: [tenantEmail, "intruder@example.com"] }),
+    );
+    await assertFails(db.doc("propertyAccess/property-b").get());
+    await assertFails(
+      db
+        .doc("propertyAccess/property-b")
+        .update({ tenantEmails: [tenantEmail] }),
+    );
+    await assertFails(
+      db.doc("propertyAccess/property-a").update({ ownerId: "owner-b" }),
+    );
+    await assertFails(db.doc("propertyAccess/property-a").delete());
+    const view = await assertSucceeds(
+      tenantDb().doc("properties/property-a").get(),
+    );
+    expect(view.data()).not.toHaveProperty("tenantEmails");
+    await assertSucceeds(
+      db.doc("properties/property-new").set(property("property-new")),
+    );
+    const missing = await assertSucceeds(
+      db.doc("propertyAccess/property-new").get(),
+    );
+    expect(missing.exists).toBe(false);
+    await assertSucceeds(
+      db.doc("propertyAccess/property-new").set(access("property-new")),
+    );
+  });
+
+  it("hides archived inventory from tenants while retaining owner access", async () => {
+    const db = ownerDb();
+    await assertSucceeds(db.doc("items/item-a").update({ archived: true }));
+    await assertSucceeds(db.doc("rooms/room-a").update({ archived: true }));
+    await assertFails(tenantDb().doc("items/item-a").get());
+    await assertFails(tenantDb().doc("rooms/room-a").get());
+    await assertFails(
+      tenantDb()
+        .collection("items")
+        .where("propertyId", "in", ["property-a"])
+        .get(),
+    );
+    await assertSucceeds(db.doc("items/item-a").get());
+    await assertSucceeds(db.doc("rooms/room-a").get());
+  });
+});
+
 describe("historical handovers", () => {
   it("permits checking an unused deterministic inspection ID", async () => {
     const result = await assertSucceeds(
       ownerDb().doc("inspections/tenancy-a_check-in").get(),
     );
     expect(result.exists).toBe(false);
+  });
+
+  it("requires a check-in before creating check-out", async () => {
+    await assertFails(
+      ownerDb()
+        .doc("inspections/tenancy-a_check-out")
+        .set(inspection("check-out")),
+    );
+    await createHandover();
+    await createHandover("check-out");
   });
 
   it("creates atomic immutable snapshots and rejects late snapshots or duplicate handovers", async () => {
@@ -341,14 +429,12 @@ describe("historical handovers", () => {
   it("prevents owners forging confirmation and restricts tenant confirmation to its fields", async () => {
     const db = ownerDb();
     await assertFails(
-      db
-        .doc("inspections/tenancy-a_check-in")
-        .set({
-          ...inspection(),
-          confirmed: true,
-          confirmedAt: timestamp,
-          confirmedBy: "tenant-a",
-        }),
+      db.doc("inspections/tenancy-a_check-in").set({
+        ...inspection(),
+        confirmed: true,
+        confirmedAt: timestamp,
+        confirmedBy: "tenant-a",
+      }),
     );
     await createHandover();
     const changes = {
@@ -406,7 +492,7 @@ describe("historical handovers", () => {
     const db = ownerDb();
     const batch = db.batch();
     batch.update(db.doc("tenancies/tenancy-a"), { status: "Completed" });
-    batch.update(db.doc("properties/property-a"), { tenantEmails: [] });
+    batch.update(db.doc("propertyAccess/property-a"), { tenantEmails: [] });
     await assertSucceeds(batch.commit());
     await assertFails(tenantDb().doc("properties/property-a").get());
     await assertSucceeds(
@@ -460,13 +546,11 @@ describe("damage report workflow", () => {
       ownerDb().doc("damageReports/report-a").update({ itemId: "item-b" }),
     );
     await assertSucceeds(
-      ownerDb()
-        .doc("damageReports/report-a")
-        .update({
-          status: "Repairing",
-          ownerNotes: "Repair booked",
-          updatedAt: timestamp,
-        }),
+      ownerDb().doc("damageReports/report-a").update({
+        status: "Repairing",
+        ownerNotes: "Repair booked",
+        updatedAt: timestamp,
+      }),
     );
     await assertFails(ownerDb().doc("damageReports/report-a").delete());
   });
@@ -557,6 +641,7 @@ describe("image storage", () => {
     await assertSucceeds(
       Promise.resolve(image.put(new Uint8Array([1]), metadata)),
     );
+    await assertSucceeds(image.getMetadata());
     await assertFails(
       environment
         .authenticatedContext("outsider", {
@@ -570,6 +655,10 @@ describe("image storage", () => {
     await assertSucceeds(
       ownerDb().doc("tenancies/tenancy-a").update({ status: "Completed" }),
     );
+    await assertSucceeds(
+      ownerDb().doc("propertyAccess/property-a").update({ tenantEmails: [] }),
+    );
+    await assertFails(image.getMetadata());
     await assertFails(
       Promise.resolve(
         storage

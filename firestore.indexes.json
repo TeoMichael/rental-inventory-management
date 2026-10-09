@@ -1,10 +1,18 @@
 {
   "indexes": [
     {
-      "collectionGroup": "properties",
+      "collectionGroup": "rooms",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "tenantEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "propertyId", "order": "ASCENDING" },
+        { "fieldPath": "archived", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "propertyId", "order": "ASCENDING" },
         { "fieldPath": "archived", "order": "ASCENDING" }
       ]
     }

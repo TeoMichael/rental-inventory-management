@@ -66,7 +66,7 @@ Landlords access records by immutable owner ID. Tenant access requires a verifie
 
 ## Project status
 
-The core inventory, tenancy, inspection, damage-reporting, and dashboard workflows are implemented on local `main`. Final security hardening and documentation review are in progress. GitHub pushes require a remote URL and available GitHub authentication. Production Firebase validation requires the project's public Web configuration; current browser verification uses local emulators.
+All four MVP phases are complete on local `main`. Lint, TypeScript, production build, 26 domain/service tests, 17 Firebase authorization tests, and the main desktop/mobile browser workflows passed. GitHub pushes require a remote URL and available GitHub authentication. Production Firebase validation requires the project's public Web configuration; current browser verification uses local emulators.
 
 ## Known limitations
 

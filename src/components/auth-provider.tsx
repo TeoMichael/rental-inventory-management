@@ -33,41 +33,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!firebaseConfigured) return;
     let stopProfile: (() => void) | undefined;
-    const stopAuth = onAuthStateChanged(
-      getFirebase().auth,
-      (current) => {
-        stopProfile?.();
-        setUser(current);
-        setProfile(null);
-        setError(null);
-        if (!current) {
-          setLoading(false);
-          return;
-        }
-        setLoading(true);
-        stopProfile = onSnapshot(
-          doc(getFirebase().db, "users", current.uid),
-          (snapshot) => {
-            setProfile(
-              snapshot.exists()
-                ? ({ ...snapshot.data(), id: snapshot.id } as Profile)
-                : null,
-            );
+    let stopAuth: (() => void) | undefined;
+    let generation = 0;
+    let closed = false;
+    const fail = (err: unknown) => {
+      if (closed) return;
+      setProfile(null);
+      setError(friendlyError(err));
+      setLoading(false);
+    };
+    try {
+      const { auth, db } = getFirebase();
+      stopAuth = onAuthStateChanged(
+        auth,
+        (current) => {
+          if (closed) return;
+          const currentGeneration = ++generation;
+          stopProfile?.();
+          setUser(current);
+          setProfile(null);
+          setError(null);
+          if (!current) {
             setLoading(false);
-          },
-          (err) => {
-            setError(friendlyError(err));
-            setLoading(false);
-          },
-        );
-      },
-      (err) => {
-        setError(friendlyError(err));
-        setLoading(false);
-      },
-    );
+            return;
+          }
+          setLoading(true);
+          stopProfile = onSnapshot(
+            doc(db, "users", current.uid),
+            { includeMetadataChanges: true },
+            (snapshot) => {
+              if (closed || generation !== currentGeneration) return;
+              // Cached absence is not proof that registration failed or a profile needs recovery.
+              if (!snapshot.exists() && snapshot.metadata.fromCache) return;
+              setProfile(
+                snapshot.exists()
+                  ? ({ ...snapshot.data(), id: snapshot.id } as Profile)
+                  : null,
+              );
+              setError(null);
+              setLoading(false);
+            },
+            (err) => {
+              if (generation === currentGeneration) fail(err);
+            },
+          );
+        },
+        (err) => {
+          if (closed) return;
+          ++generation;
+          stopProfile?.();
+          setUser(null);
+          fail(err);
+        },
+      );
+    } catch (err) {
+      queueMicrotask(() => fail(err));
+    }
     return () => {
-      stopAuth();
+      closed = true;
+      ++generation;
+      stopAuth?.();
       stopProfile?.();
     };
   }, []);

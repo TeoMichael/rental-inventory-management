@@ -12,11 +12,11 @@ import {
 } from "firebase/storage";
 
 const config = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim(),
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim(),
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim(),
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim(),
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim(),
 };
 
 export const firebaseConfigured = Object.values(config).every((value) =>
@@ -34,7 +34,9 @@ export function getFirebase(): FirebaseServices {
       "Firebase is not configured. Add the public Firebase settings to .env.local and restart the app.",
     );
   if (shared.__rentalFirebase) return shared.__rentalFirebase;
-  const app = getApps().length ? getApp() : initializeApp(config);
+  const app = getApps().some((app) => app.name === "[DEFAULT]")
+    ? getApp()
+    : initializeApp(config);
   const services = {
     auth: getAuth(app),
     db: getFirestore(app),
