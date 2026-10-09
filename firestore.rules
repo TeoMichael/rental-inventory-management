@@ -1,0 +1,220 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function landlord() { return signedIn() && get(userPath()).data.role == 'landlord'; }
+    function tenant() {
+      return signedIn() && request.auth.token.email_verified == true
+        && get(userPath()).data.role == 'tenant'
+        && get(userPath()).data.email == request.auth.token.email;
+    }
+    function tenantEmail(email) { return tenant() && request.auth.token.email == email; }
+    function owns(data) { return landlord() && data.ownerId == request.auth.uid; }
+    function readable(data) { return owns(data) || tenantEmail(data.tenantEmail); }
+    function propertyPath(id) { return /databases/$(database)/documents/properties/$(id); }
+    function propertyOwner(id) { return owns(get(propertyPath(id)).data); }
+    function activePropertyOwner(id) {
+      return propertyOwner(id) && get(propertyPath(id)).data.archived == false;
+    }
+    function propertyReader(id) {
+      return propertyOwner(id) || (tenant()
+        && request.auth.token.email in get(propertyPath(id)).data.tenantEmails
+        && get(propertyPath(id)).data.archived == false);
+    }
+    function text(value, max) { return value is string && value.size() <= max; }
+    function requiredText(value, max) { return text(value, max) && value.size() > 0; }
+    function iso(value) {
+      return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$');
+    }
+    function date(value) { return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function email(value) { return requiredText(value, 254) && value.matches('^[^ @]+@[^ @]+[.][^ @]+$'); }
+    function condition(value) { return value in ['New', 'Good', 'Fair', 'Damaged', 'Broken']; }
+    function base(data, id) {
+      return data.id == id && requiredText(data.ownerId, 128)
+        && iso(data.createdAt) && iso(data.updatedAt) && data.archived is bool;
+    }
+    function initial(data, id) { return base(data, id) && owns(data) && data.archived == false; }
+    function stable(data) {
+      return data.id == resource.data.id && data.ownerId == resource.data.ownerId
+        && data.createdAt == resource.data.createdAt
+        && (resource.data.archived == false || data.archived == true);
+    }
+    function photo(data, propertyId) {
+      return data is map && data.keys().hasAll(['id', 'url', 'path', 'name', 'createdAt'])
+        && data.keys().hasOnly(['id', 'url', 'path', 'name', 'createdAt'])
+        && requiredText(data.id, 128) && requiredText(data.name, 255)
+        && text(data.url, 2048) && (data.url.matches('^https://.*') || data.url.matches('^http://127[.]0[.]0[.]1(:[0-9]+)?/.*')) && iso(data.createdAt)
+        && data.path is string && data.path.split('/').size() == 4
+        && data.path.split('/')[0] == 'properties' && data.path.split('/')[1] == propertyId
+        && requiredText(data.path.split('/')[2], 128) && data.path.split('/')[3] == data.id;
+    }
+    function photos(data, propertyId) {
+      return data is list && data.size() <= 10
+        && (data.size() < 1 || photo(data[0], propertyId))
+        && (data.size() < 2 || photo(data[1], propertyId))
+        && (data.size() < 3 || photo(data[2], propertyId))
+        && (data.size() < 4 || photo(data[3], propertyId))
+        && (data.size() < 5 || photo(data[4], propertyId))
+        && (data.size() < 6 || photo(data[5], propertyId))
+        && (data.size() < 7 || photo(data[6], propertyId))
+        && (data.size() < 8 || photo(data[7], propertyId))
+        && (data.size() < 9 || photo(data[8], propertyId))
+        && (data.size() < 10 || photo(data[9], propertyId));
+    }
+    function propertyValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'name', 'address', 'description', 'propertyType', 'tenantEmails'])
+        && requiredText(data.name, 200) && text(data.address, 500) && text(data.description, 5000)
+        && requiredText(data.propertyType, 100) && data.tenantEmails is list && data.tenantEmails.size() <= 200;
+    }
+    function roomValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'name', 'description'])
+        && requiredText(data.propertyId, 128) && requiredText(data.name, 200) && text(data.description, 5000);
+    }
+    function itemValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'roomId', 'name', 'category', 'quantity', 'condition', 'description', 'estimatedValue', 'photos'])
+        && requiredText(data.propertyId, 128) && requiredText(data.roomId, 128)
+        && requiredText(data.name, 200) && text(data.description, 5000)
+        && data.category in ['Furniture', 'Appliance', 'Electronics', 'Kitchen Equipment', 'Bathroom Equipment', 'Decoration', 'Other']
+        && data.quantity is int && data.quantity >= 1 && data.quantity <= 10000 && condition(data.condition)
+        && (data.estimatedValue == null || (data.estimatedValue is number && data.estimatedValue >= 0 && data.estimatedValue <= 1000000000000))
+        && photos(data.photos, data.propertyId);
+    }
+    function itemRoom(data) {
+      let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
+      return owns(room) && room.propertyId == data.propertyId && room.archived == false;
+    }
+    function tenancyValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'tenantName', 'tenantEmail', 'phone', 'startDate', 'endDate', 'status'])
+        && requiredText(data.propertyId, 128) && requiredText(data.tenantName, 200)
+        && email(data.tenantEmail) && text(data.phone, 80) && date(data.startDate)
+        && (data.endDate == '' || (date(data.endDate) && data.startDate <= data.endDate))
+        && data.status in ['Upcoming', 'Active', 'Completed', 'Cancelled'];
+    }
+    function tenancyGrant(data) {
+      return !(data.status in ['Upcoming', 'Active']) || data.archived
+        || data.tenantEmail in getAfter(propertyPath(data.propertyId)).data.tenantEmails;
+    }
+    function inspectionValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'tenancyId', 'tenantEmail', 'type', 'inspectedAt', 'confirmed', 'confirmedAt', 'confirmedBy', 'itemCount'])
+        && requiredText(data.propertyId, 128) && requiredText(data.tenancyId, 128) && email(data.tenantEmail)
+        && data.type in ['check-in', 'check-out'] && id == data.tenancyId + '_' + data.type
+        && iso(data.inspectedAt) && data.confirmed is bool
+        && (data.confirmedAt == null || iso(data.confirmedAt))
+        && (data.confirmedBy == null || requiredText(data.confirmedBy, 128))
+        && data.itemCount is int && data.itemCount >= 1 && data.itemCount <= 400;
+    }
+    function inspectionTenancy(data) {
+      let tenancy = get(/databases/$(database)/documents/tenancies/$(data.tenancyId)).data;
+      return owns(tenancy) && tenancy.archived == false && tenancy.propertyId == data.propertyId
+        && tenancy.tenantEmail == data.tenantEmail && tenancy.status != 'Cancelled';
+    }
+    function snapshotValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'inspectionId', 'tenancyId', 'tenantEmail', 'itemId', 'itemName', 'roomName', 'quantity', 'condition', 'notes', 'photos', 'inspectedAt'])
+        && requiredText(data.propertyId, 128) && requiredText(data.inspectionId, 256)
+        && requiredText(data.tenancyId, 128) && email(data.tenantEmail) && requiredText(data.itemId, 128)
+        && id == data.inspectionId + '_' + data.itemId
+        && requiredText(data.itemName, 200) && requiredText(data.roomName, 200)
+        && data.quantity is int && data.quantity >= 1 && data.quantity <= 10000
+        && condition(data.condition) && text(data.notes, 5000) && photos(data.photos, data.propertyId) && iso(data.inspectedAt);
+    }
+    function atomicSnapshot(data) {
+      let parentPath = /databases/$(database)/documents/inspections/$(data.inspectionId);
+      let parent = getAfter(parentPath).data;
+      return !exists(parentPath) && owns(parent) && parent.propertyId == data.propertyId
+        && parent.tenancyId == data.tenancyId && parent.tenantEmail == data.tenantEmail
+        && parent.inspectedAt == data.inspectedAt && parent.createdAt == data.createdAt;
+    }
+    function damageValid(data, id) {
+      return base(data, id)
+        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'tenancyId', 'tenantEmail', 'itemId', 'itemName', 'description', 'photos', 'status', 'ownerNotes', 'reportedBy'])
+        && requiredText(data.propertyId, 128) && requiredText(data.tenancyId, 128) && email(data.tenantEmail)
+        && requiredText(data.itemId, 128) && requiredText(data.itemName, 200)
+        && requiredText(data.description, 5000) && photos(data.photos, data.propertyId)
+        && data.status in ['Reported', 'Checking', 'Repairing', 'Resolved']
+        && text(data.ownerNotes, 5000) && requiredText(data.reportedBy, 128);
+    }
+    function damageRelationships(data) {
+      let tenancy = get(/databases/$(database)/documents/tenancies/$(data.tenancyId)).data;
+      let item = get(/databases/$(database)/documents/items/$(data.itemId)).data;
+      return tenancy.tenantEmail == request.auth.token.email && tenancy.status == 'Active' && tenancy.archived == false
+        && tenancy.propertyId == data.propertyId && tenancy.ownerId == data.ownerId
+        && item.propertyId == data.propertyId && item.ownerId == data.ownerId && item.archived == false
+        && item.name == data.itemName && get(propertyPath(data.propertyId)).data.archived == false;
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['id', 'name', 'email', 'role', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['id', 'name', 'email', 'role', 'createdAt'])
+        && request.resource.data.id == uid && requiredText(request.resource.data.name, 120)
+        && email(request.resource.data.email) && request.resource.data.email == request.auth.token.email
+        && request.resource.data.role in ['landlord', 'tenant'] && iso(request.resource.data.createdAt);
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        && requiredText(request.resource.data.name, 120);
+    }
+    match /properties/{id} {
+      allow read: if owns(resource.data) || (tenant() && request.auth.token.email in resource.data.tenantEmails && resource.data.archived == false);
+      allow create: if initial(request.resource.data, id) && propertyValid(request.resource.data, id) && request.resource.data.tenantEmails.size() == 0;
+      allow update: if owns(resource.data) && stable(request.resource.data) && propertyValid(request.resource.data, id);
+    }
+    match /rooms/{id} {
+      allow read: if owns(resource.data) || propertyReader(resource.data.propertyId);
+      allow create: if initial(request.resource.data, id) && roomValid(request.resource.data, id) && activePropertyOwner(request.resource.data.propertyId);
+      allow update: if owns(resource.data) && stable(request.resource.data) && roomValid(request.resource.data, id)
+        && request.resource.data.propertyId == resource.data.propertyId && activePropertyOwner(resource.data.propertyId);
+    }
+    match /items/{id} {
+      allow read: if owns(resource.data) || propertyReader(resource.data.propertyId);
+      allow create: if initial(request.resource.data, id) && itemValid(request.resource.data, id)
+        && activePropertyOwner(request.resource.data.propertyId) && itemRoom(request.resource.data);
+      allow update: if owns(resource.data) && stable(request.resource.data) && itemValid(request.resource.data, id)
+        && request.resource.data.propertyId == resource.data.propertyId && activePropertyOwner(resource.data.propertyId) && itemRoom(request.resource.data);
+    }
+    match /tenancies/{id} {
+      allow read: if readable(resource.data);
+      allow create: if initial(request.resource.data, id) && tenancyValid(request.resource.data, id)
+        && activePropertyOwner(request.resource.data.propertyId) && tenancyGrant(request.resource.data);
+      allow update: if owns(resource.data) && stable(request.resource.data) && tenancyValid(request.resource.data, id)
+        && request.resource.data.propertyId == resource.data.propertyId && request.resource.data.tenantEmail == resource.data.tenantEmail
+        && propertyOwner(resource.data.propertyId) && tenancyGrant(request.resource.data);
+    }
+    match /inspections/{id} {
+      // Transactions must be able to prove that a deterministic handover ID is unused.
+      allow get: if landlord() && !exists(/databases/$(database)/documents/inspections/$(id));
+      allow read: if readable(resource.data);
+      allow create: if initial(request.resource.data, id) && inspectionValid(request.resource.data, id)
+        && activePropertyOwner(request.resource.data.propertyId) && inspectionTenancy(request.resource.data)
+        && request.resource.data.confirmed == false && request.resource.data.confirmedAt == null && request.resource.data.confirmedBy == null;
+      allow update: if tenantEmail(resource.data.tenantEmail) && resource.data.type == 'check-in'
+        && resource.data.confirmed == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmed', 'confirmedAt', 'confirmedBy', 'updatedAt'])
+        && request.resource.data.confirmed == true && iso(request.resource.data.confirmedAt)
+        && request.resource.data.confirmedBy == request.auth.uid && iso(request.resource.data.updatedAt);
+    }
+    match /inspectionItems/{id} {
+      allow read: if readable(resource.data);
+      // Item IDs are historical references. The owner may record text without looking up live inventory.
+      // The client validates current items; omitting per-item reads keeps atomic handovers within rule access limits.
+      allow create: if initial(request.resource.data, id) && snapshotValid(request.resource.data, id) && atomicSnapshot(request.resource.data);
+    }
+    match /damageReports/{id} {
+      allow read: if readable(resource.data);
+      allow create: if tenantEmail(request.resource.data.tenantEmail) && damageValid(request.resource.data, id)
+        && request.resource.data.archived == false && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.status == 'Reported' && request.resource.data.ownerNotes == '' && damageRelationships(request.resource.data);
+      allow update: if owns(resource.data) && damageValid(request.resource.data, id)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'ownerNotes', 'updatedAt']);
+    }
+    // No delete grants: archival preserves tenancy, inspection, and photo references.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

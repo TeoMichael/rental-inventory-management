@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "properties",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tenantEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "archived", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "items", "fieldPath": "photos", "indexes": [] },
+    {
+      "collectionGroup": "inspectionItems",
+      "fieldPath": "photos",
+      "indexes": []
+    },
+    { "collectionGroup": "damageReports", "fieldPath": "photos", "indexes": [] }
+  ]
+}

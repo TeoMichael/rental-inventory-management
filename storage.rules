@@ -1,0 +1,33 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function owner(propertyId) {
+      // Property ownership was established under Firestore's immutable landlord role rules.
+      return signedIn() && firestore.get(/databases/(default)/documents/properties/$(propertyId)).data.ownerId == request.auth.uid;
+    }
+    function tenant() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+    function tenantReader(propertyId) {
+      let property = firestore.get(/databases/(default)/documents/properties/$(propertyId)).data;
+      return tenant() && property.archived == false && request.auth.token.email in property.tenantEmails;
+    }
+    function tenantUploader(propertyId) {
+      let tenancy = firestore.get(/databases/(default)/documents/tenancies/$(request.resource.metadata.tenancyId)).data;
+      return tenant() && tenancy.tenantEmail == request.auth.token.email && tenancy.propertyId == propertyId
+        && tenancy.status == 'Active' && tenancy.archived == false;
+    }
+    match /properties/{propertyId}/{uploaderUid}/{photoId} {
+      allow read: if owner(propertyId) || tenantReader(propertyId);
+      allow create: if resource == null && signedIn() && request.auth.uid == uploaderUid
+        && firestore.get(/databases/(default)/documents/properties/$(propertyId)).data.archived == false
+        && (owner(propertyId) || tenantUploader(propertyId))
+        && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+      // Photos are append-only evidence. Removing a photo from current inventory never destroys a historical image.
+      allow update, delete: if false;
+    }
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}
