@@ -1,5 +1,7 @@
 # Database design
 
+This describes the implemented schema and access boundaries frozen in [MVP v0.1.0](release-v0.1.0.md). The release finalization makes no schema or rule changes. Further hardening below is future work.
+
 The MVP uses the default Firestore database and flat top-level collections. IDs are also stored in each record for consistent client models. `ownerId` always identifies the landlord, including records created by tenants. `createdAt`, `updatedAt`, and inspection times are ISO UTC strings; tenancy dates use `YYYY-MM-DD`. Dates are validated by the client and bounded/formatted by the rules. They are client-supplied timestamps rather than trusted server audit times.
 
 | Collection        | Main relationships                                  | Application query                                                                                              |

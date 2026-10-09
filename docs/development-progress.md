@@ -42,7 +42,7 @@ GitHub push: pending remote configuration.
 
 Status: Complete.
 
-Commit: `chore: harden security testing and MVP documentation` — final phase commit on `main` (see `git log -1 --oneline`).
+Commit: `e8af3bc` — `chore: harden security testing and MVP documentation`.
 
 Separated private invitation grants from tenant-readable properties, enforced archived-inventory denial and check-out ordering, and revised tenant listeners to clear revoked/cached data. Added guarded auth callbacks, reconnect/retry behavior, friendly upload/auth errors, and explicit account-load failures. Split inspection and dashboard screens into focused modules. Reviewed archival dependencies, image retention, query/index limits, and historical snapshots.
 
@@ -53,6 +53,18 @@ Final browser checks verified assigned tenant inventory and photos, landlord rep
 Diff review found no tracked local configuration or secrets. Actual environment values, emulator exports, screenshots, and diagnostic files are ignored. Known limits and production setup steps are documented in README and the database/Firebase guides.
 
 GitHub push: unavailable because no remote is configured. Production Firebase checks require public Web-app configuration.
+
+## MVP v0.1.0 baseline — 9 October 2026
+
+Status: Frozen and verified. Release tag: `v0.1.0-mvp`.
+
+Started from a clean `main` at `e8af3bc`, with all four phase commits intact and no remote or existing release tag. No unfinished implementation changes were found. Finalization adds release documentation only; application code, tests, dependencies, and configuration remain unchanged.
+
+Fresh verification passed `pnpm lint`, `pnpm typecheck`, `pnpm test` (26 tests), `pnpm build`, and the `pnpm test:rules` script (17 tests): 43 tests total. Rules ran with an ignored temporary config on Firestore 8180 and Storage 9299 and a separate process temporary directory, preserving the manual demo. All five commands exited successfully. Expected denied-request diagnostics and Java runtime deprecation warnings did not fail the rules suite.
+
+Reviewed all agreed landlord and tenant workflows against existing screens, repository operations, tests, and the completed phase browser checks. Fresh browser smoke checks confirmed dashboard counts, inventory photo loading, confirmed inspection history, Good-to-Damaged comparison, and damage-report management. No record edits or new features were made during release verification. Production Firebase and real-device camera checks remain pending.
+
+Release commit: `chore: finalize rental inventory MVP v0.1.0`, identified by the immutable `v0.1.0-mvp` tag. GitHub branch/tag pushes remain pending because no remote is configured; no authentication bypass or credential creation was attempted. See [release notes](release-v0.1.0.md) for the frozen scope and safe push commands.
 
 ## Environment notes
 

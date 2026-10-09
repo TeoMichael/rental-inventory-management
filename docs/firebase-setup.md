@@ -1,5 +1,7 @@
 # Firebase setup
 
+This guide applies to the frozen [MVP v0.1.0 baseline](release-v0.1.0.md). Local authorization tests passed; production Firebase integration still requires project configuration and validation. Release finalization does not change Firebase configuration or security rules.
+
 ## Create the project
 
 1. Create a Firebase project and register a Web app in the [Firebase console](https://console.firebase.google.com/).

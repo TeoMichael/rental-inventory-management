@@ -1,6 +1,8 @@
-# Keyline · Rental Inventory Management
+# Rental Inventory Management — MVP v0.1.0
 
-A responsive rental inventory application for landlords and tenants. Organize properties and rooms, record household items and photographs, and preserve a clear record of each rental handover.
+Keyline is a responsive rental inventory application for landlords and tenants. Organize properties and rooms, record household items and photographs, and preserve a clear record of each rental handover.
+
+This is the first frozen MVP baseline, identified by the annotated Git tag `v0.1.0-mvp`. See [release notes](docs/release-v0.1.0.md) for verification, limitations, and production requirements. Future development should use new branches and preserve this historical tag.
 
 ## Stack
 
@@ -22,7 +24,7 @@ Fill in the `NEXT_PUBLIC_FIREBASE_*` values using your Firebase web-app configur
 
 Without Firebase configuration the app displays setup instructions. With the emulator flag enabled, accounts and records stay in the local demo project. A successful unconfigured build does not prove a live Firebase connection.
 
-## Implemented features
+## Implemented MVP
 
 - Registration, login, logout, password reset, landlord/tenant roles, and tenant email verification.
 - Property, room, and inventory create/read/update/delete workflows. Deletion archives records to preserve history.
@@ -39,14 +41,14 @@ See [development progress](docs/development-progress.md) for phase commits and v
 ## Verification
 
 ```sh
-npm run lint
-npm run typecheck
-npm run test
-npm run build
-npm run test:rules
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm test:rules
 ```
 
-The corresponding `pnpm` commands run the same scripts. Rule tests require Java 21+ and available emulator ports. The development environment supplied pnpm rather than npm, so equivalent script entry points are used here.
+The corresponding `npm run` commands run the same scripts. Rule tests require Java 21+ and available emulator ports. Stop or isolate a running manual demo before starting the rules suite; see [Firebase setup](docs/firebase-setup.md). The release verification passed all five scripts with 26 domain/service tests and 17 authorization tests.
 
 ## Project structure
 
@@ -66,7 +68,7 @@ Landlords access records by immutable owner ID. Tenant access requires a verifie
 
 ## Project status
 
-All four MVP phases are complete on local `main`. Lint, TypeScript, production build, 26 domain/service tests, 17 Firebase authorization tests, and the main desktop/mobile browser workflows passed. GitHub pushes require a remote URL and available GitHub authentication. Production Firebase validation requires the project's public Web configuration; current browser verification uses local emulators.
+All four MVP phase commits are preserved on local `main`. Release finalization changes documentation only; application behavior and dependencies are frozen for v0.1.0. GitHub pushes require a remote URL and available GitHub authentication. Production Firebase validation requires the project's public Web configuration; current browser verification uses local emulators.
 
 ## Known limitations
 
@@ -82,3 +84,5 @@ These choices and access boundaries are explained in [database design](docs/data
 ## Future improvements
 
 QR inventory labels, PDF handover reports, maintenance history, email notifications, a PWA, inventory templates, and richer before/after comparisons. These are outside the MVP scope.
+
+No future features, AI functionality, redesign, or additional refactoring are part of this release.
