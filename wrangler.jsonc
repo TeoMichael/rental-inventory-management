@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "keyline-rental-inventory",
-  "main": ".open-next/worker.js",
+  "main": "cloudflare-worker.mjs",
   "compatibility_date": "2026-10-09",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
@@ -9,6 +9,9 @@
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS",
+  },
+  "alias": {
+    "server-only": "./scripts/cloudflare-server-only.mjs",
   },
   // Runtime secrets are set with Wrangler's secret mechanism. Keep values
   // outside this file. No paid storage, image, queue, or database bindings.
