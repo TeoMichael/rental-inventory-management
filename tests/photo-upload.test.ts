@@ -222,6 +222,7 @@ describe("photo upload authorization", () => {
         `Bearer ${bearer}`,
       );
       expect(entry.init.cache).toBe("no-store");
+      expect(entry.init.redirect).toBe("manual");
     }
     const outgoing = imageRequests()[0];
     expect(new Headers(outgoing.init.headers).get("Authorization")).toBe(
@@ -235,6 +236,24 @@ describe("photo upload authorization", () => {
     expect(form.has("transformation")).toBe(false);
     expect(form.has("signature")).toBe(false);
   });
+
+  it.each([301, 302, 303, 307, 308])(
+    "rejects upstream HTTP %s redirects without forwarding credentials",
+    async (status) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      fetchMock.mockResolvedValueOnce(
+        new Response(null, {
+          status,
+          headers: { Location: "https://untrusted.example/collect" },
+        }),
+      );
+      const response = await POST(request());
+      expect(response.status).toBe(503);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("manual");
+      expect(imageRequests()).toHaveLength(0);
+    },
+  );
 
   it.each([null, "Bearer forged", "Basic fake"])(
     "rejects missing or malformed credentials %s",

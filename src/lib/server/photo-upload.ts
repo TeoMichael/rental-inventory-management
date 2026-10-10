@@ -85,9 +85,13 @@ async function fetchService(
     const response = await fetch(url, {
       ...init,
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(20_000),
     });
+    // Workers supports manual redirects. Reject them before any credential can
+    // be forwarded to another origin, matching the Node redirect-error policy.
+    if (response.status >= 300 && response.status < 400)
+      throw new Error("Upstream redirects are not allowed.");
     if (response.status >= 500)
       console.warn("Photo upstream response failed", {
         provider,
