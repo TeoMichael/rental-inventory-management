@@ -82,13 +82,46 @@ async function fetchService(
   provider: "firebase" | "imagekit",
 ) {
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...init,
       cache: "no-store",
       redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
-  } catch {
+    if (response.status >= 500)
+      console.warn("Photo upstream response failed", {
+        provider,
+        status: response.status,
+      });
+    return response;
+  } catch (error) {
+    let detail = error instanceof Error ? error.message : "Unknown fetch error";
+    const privateKey = process.env.IMAGEKIT_PRIVATE_KEY;
+    const authorization = new Headers(init.headers).get("Authorization");
+    let idToken: unknown;
+    if (typeof init.body === "string") {
+      try {
+        idToken = object(JSON.parse(init.body)).idToken;
+      } catch {}
+    }
+    for (const value of [
+      privateKey,
+      privateKey ? btoa(`${privateKey}:`) : undefined,
+      authorization,
+      authorization?.replace(/^(Bearer|Basic) /, ""),
+      idToken,
+    ]) {
+      if (typeof value === "string" && value)
+        detail = detail.replaceAll(value, "[redacted]");
+    }
+    detail = detail
+      .replace(/https?:\/\/\S+/g, "[upstream URL]")
+      .replace(
+        /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+        "[redacted]",
+      )
+      .slice(0, 240);
+    console.warn("Photo upstream request failed", { provider, detail });
     throw new UploadError(
       provider === "imagekit" ? 502 : 503,
       provider === "imagekit"

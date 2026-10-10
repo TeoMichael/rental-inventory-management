@@ -178,6 +178,24 @@ afterEach(() => {
 });
 
 describe("photo upload authorization", () => {
+  it("keeps credentials out of upstream failure diagnostics and responses", async () => {
+    const bearer = token();
+    const encodedKey = btoa(`${PRIVATE_KEY}:`);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(
+      new Error(
+        `Unsupported fetch: ${PRIVATE_KEY} ${encodedKey} Bearer ${bearer} https://upstream.example/private`,
+      ),
+    );
+    const response = await POST(request({ auth: `Bearer ${bearer}` }));
+    expect(response.status).toBe(503);
+    const visible = JSON.stringify([await response.json(), warning.mock.calls]);
+    for (const value of [PRIVATE_KEY, encodedKey, bearer, "upstream.example"])
+      expect(visible).not.toContain(value);
+    expect(visible).toContain("Unsupported fetch");
+    expect(visible).toContain("[redacted]");
+  });
+
   it("uses the Firebase user's bearer for rules-protected reads and returns only photo metadata", async () => {
     const bearer = token();
     const response = await POST(request({ auth: `Bearer ${bearer}` }));
