@@ -76,7 +76,7 @@ An emulator temporary-directory collision and later runtime interruption lost on
 
 ## Free production infrastructure migration — 9 October 2026
 
-Current status: ImageKit migration production verification is complete on `chore/free-production-infrastructure`. The Free Singapore Node service is [live on Render](https://keyline-rental-inventory.onrender.com) with approved private ImageKit service settings and an authorized Firebase Auth hostname. Owner/tenant uploads, new report persistence, repair notes, completed-tenancy revocation/retention and secret inspection pass. Cloudflare remains historical because 13/14 ms near-limit CPU samples exceed Workers Free; its automatic builds are disabled. Main merge, deployment from main and annotated `v0.1.1` remain pending. See the latest checkpoint below.
+Current status: ImageKit infrastructure is merged/pushed to main for release target `v0.1.1`, preserving history and the immutable `v0.1.0-mvp` baseline. The Free Singapore Node service is [live from main on Render](https://keyline-rental-inventory.onrender.com), with migration production verification complete and fresh main tenant UI, 26 Completed-fixture checks, configured upload and public-resource inspection passing. Owner/tenant uploads, reports, repair notes, completed-tenancy revocation/retention and secret inspection pass. Cloudflare remains historical because 13/14 ms near-limit CPU exceeds Workers Free; its automatic builds are disabled. Publish the annotated release tag only after final deployed-commit verification. See the latest checkpoint below.
 
 At this historical checkpoint, the frozen `v0.1.0-mvp` tag and `main` resolve to `5de01de`. The baseline is published in the private [GitHub repository](https://github.com/TeoMichael/rental-inventory-management). Infrastructure changes remain isolated on the migration branch; main merge and `v0.1.1` follow successful Cloudflare deployment and verification. No Cloudflare application URL is established by the local checks.
 
@@ -193,3 +193,17 @@ Available Render runtime logs contained no raw or Basic-encoded private key and 
 Render remains Hobby/Free with no card and $0 accrued/projected charges. Its actual instance caps are 512 MB RAM/0.15 CPU; CPU/memory graphs require an upgrade and were not enabled, so exact usage is unmeasured. The dashboard showed 2 MB outbound with hourly reporting lag. Shared 750 Free hours, 5 GB outbound and 500 pipeline minutes monthly, idle sleep and high-outbound suspension limitations remain. No paid setting changed. Cloudflare automatic builds were disabled and saved, preventing unused-host rebuilds on subsequent migration pushes.
 
 The package now identifies the intended `0.1.1` release and `render.yaml` records target `branch: main`, while the manually created Render service still deploys the migration branch. Main merge/push, the actual service branch switch/deployment and annotated `v0.1.1` remain pending. The release tag will follow successful final verification of Render from main. Frozen `v0.1.0-mvp` stays at `5de01de`.
+
+### Main merge and production build — 10 October 2026
+
+The final infrastructure phase was committed/pushed as `0ea3b98`. Preserve-history merge `b724b60594d93ead478a17bf8b67867dd7d01a1b` is pushed to main. The immutable `v0.1.0-mvp` tag remains at `5de01de`; main now includes the ImageKit/Render infrastructure and package release target `0.1.1`.
+
+The actual Render service branch is saved as main, matching the manual-service configuration recorded in `render.yaml`. Auto-triggered deploy `dep-db55c97g0jfs73b5vlg0` is Building; its logs explicitly check out `b724b60594d93ead478a17bf8b67867dd7d01a1b` from main. No Live main deployment is established yet. The final documentation update will also be deployed from main. Publish annotated `v0.1.1` only after final deployed-commit verification; do not move or overwrite the frozen tag.
+
+### Main merge deployment Live — 10 October 2026
+
+Deploy `dep-db55c97g0jfs73b5vlg0` is Live at exact main merge `b724b60594d93ead478a17bf8b67867dd7d01a1b`, after 1 minute 55 seconds. The server reported ready in 1,892 ms. A fresh configured upload probe returned the intended 400. A fresh scan covered eight shells plus 21 JavaScript chunks: all 29 referenced public resources, totaling 1,491,982 bytes, with zero raw/Basic-encoded private-key matches. Combined content SHA-256: `33c95d355e9e0d3f92c0278adff00c425ebf2437d06b78187c1146b03a40a5b0`.
+
+Fresh tenant UI reload against Live main passed: confirmed check-in and completed inspection list remain readable, new reporting is disabled, all three retained Repairing reports remain accessible, and the new Render report shows its full repair note. All four displayed images loaded at 720 pixels. The 26 Completed-fixture security/history/upload-denial checks passed again against this Live main checkpoint, with no successful uploads, new records or allowed data writes.
+
+This main merge deployment is the production validation checkpoint. Release procedure: deploy and verify the final documentation commit, then publish annotated `v0.1.1`. The immutable `v0.1.0-mvp` tag remains at `5de01de`.
