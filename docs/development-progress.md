@@ -76,7 +76,7 @@ An emulator temporary-directory collision and later runtime interruption lost on
 
 ## Free production infrastructure migration — 9 October 2026
 
-Status: Local ImageKit integration complete on `chore/free-production-infrastructure`. Live owner inventory/handover workflows, tenant registration and real email verification, tenant confirmation/evidence, owner repair management, completed tenancy revocation/retention, mobile controls and 37 fresh live security checks passed through the local production build. Cloudflare authentication/deployment and verification on the deployed URL remain pending.
+Status: Local ImageKit integration complete and pushed as `d45e638` on `chore/free-production-infrastructure`. Live owner inventory/handover workflows, tenant registration and real email verification, tenant confirmation/evidence, owner repair management, completed tenancy revocation/retention, mobile controls and 37 fresh live security checks passed through the local production build. Cloudflare authentication is complete; Linux build/deployment and verification on the deployed URL remain pending.
 
 The frozen `v0.1.0-mvp` tag and `main` resolve to `5de01de`. The baseline is published in the private [GitHub repository](https://github.com/TeoMichael/rental-inventory-management). Infrastructure changes remain isolated on the migration branch; main merge and `v0.1.1` follow successful Cloudflare deployment and verification. No Cloudflare application URL is established by the local checks.
 
@@ -84,7 +84,7 @@ Firebase `keyline-rental-inventory-prod` now has ordinary free Email/Password Au
 
 New uploads use a private `/api/photos` ImageKit proxy, Firebase Auth REST validation, and Firestore reads under the user's token. Owner/verified Active-tenant authorization, controlled UID paths, 8 MiB JPEG/PNG/WebP limits, strict provider response validation, legacy compatibility, immutable evidence, and retained partial uploads are implemented. New responses keep the frozen `{id, path, name, url, createdAt}` metadata; ImageKit's file ID is checked on the server and not persisted. Strict optional paired metadata remains supported for earlier verification records. OpenNext 1.20.10 targets full Next.js on Workers Free with `ASSETS` only. Public Firebase `.env.local` settings and ignored `.dev.vars` runtime ImageKit settings remain separate; a preflight rejects private keys in `.env*` or build process variables.
 
-Latest verification: lint, TypeScript, the Next.js production build, 96 application tests and all 40 Firestore/legacy Storage rules tests passed: 136 total. The application suite includes rejection of whitespace-only ImageKit file IDs. Production build output includes dynamic `/api/photos` and `/properties/[id]` routes. A scan of 82 Git candidate files and 25 built client files found no private key. Native Windows OpenNext packaging failed with `EPERM` creating the pnpm `@next/env` symlink. No Worker output/preview was completed. A Linux build, potentially free Cloudflare Workers Builds after authentication and branch publication, remains necessary.
+Latest verification: lint, TypeScript, the Next.js production build, 96 application tests and all 40 Firestore/legacy Storage rules tests passed: 136 total. The application suite includes rejection of whitespace-only ImageKit file IDs. Production build output includes dynamic `/api/photos` and `/properties/[id]` routes. A scan of 82 Git candidate files and 25 built client files found no private key. Native Windows OpenNext packaging failed with `EPERM` creating the pnpm `@next/env` symlink. No application Worker output/preview was completed. A Linux build through free Cloudflare Workers Builds remains necessary; GitHub repository authorization is pending.
 
 ### Live integration checkpoint — 10 October 2026
 
@@ -105,3 +105,13 @@ All 37 fresh live security/retention checks passed: the first 23 included nine f
 Production `firebase.json` now has Auth/Firestore configuration only, with no Storage deployment or emulator section. Historical Storage rules remain, and `pnpm test:rules` selects the separate `firebase.emulators.json` configuration for Firestore/Storage regressions.
 
 Actual camera capture, deployed email/domain/privacy flows, Cloudflare CPU/request behavior, deployment and verification on its URL remain pending. Main merge and `v0.1.1` follow those checks. No credit card, billing account, paid binding, or automatic upgrade is authorized. See [production deployment](production-deployment.md).
+
+### Cloudflare account checkpoint — 10 October 2026
+
+The ImageKit migration commit `d45e638` is pushed to `chore/free-production-infrastructure`. Frozen `main` and the immutable `v0.1.0-mvp` tag remain at `5de01de`; no merge or new release tag has occurred. The completed local checks remain 136 automated tests and 37 fresh live security/retention checks.
+
+The user completed Cloudflare authentication. Wrangler OAuth succeeded with the narrow account/user read, Worker script write, tail read and offline access scopes. The dashboard confirms Workers Free at $0, with 100,000 requests/day, 10 ms CPU per HTTP invocation and 3,000 build minutes/month. The account already has the `tripd04-nmc.workers.dev` subdomain.
+
+Ignored `.dev.vars` values were piped privately into `wrangler secret bulk`, creating the minimal draft `keyline-rental-inventory` Worker and encrypted runtime `IMAGEKIT_PRIVATE_KEY` and `IMAGEKIT_URL_ENDPOINT` secrets. Secret listing confirms their names and types without revealing values. The draft has no active routes or public application deployment; it does not establish build or application readiness.
+
+The official Cloudflare Workers and Pages GitHub App authorization is prepared for only `TeoMichael/rental-inventory-management`; human approval is pending. After authorization, configure the migration branch and public Firebase build settings in Workers Builds, package and deploy on Linux, then verify the actual application URL. ImageKit secrets must remain runtime-only. No card, paid plan, paid binding, or automatic upgrade was enabled.
