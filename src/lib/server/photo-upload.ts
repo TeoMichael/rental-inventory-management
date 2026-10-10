@@ -7,6 +7,12 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 type MimeType = (typeof MIME_TYPES)[number];
 type JsonObject = Record<string, unknown>;
+type NativeByteReader = ReadableStreamBYOBReader & {
+  readAtLeast?: (
+    minimum: number,
+    buffer: Uint8Array<ArrayBuffer>,
+  ) => Promise<ReadableStreamReadResult<Uint8Array<ArrayBuffer>>>;
+};
 type Configuration = {
   apiKey: string;
   projectId: string;
@@ -370,23 +376,58 @@ async function readPhoto(request: Request, mime: MimeType) {
   if (declaredSize !== null && Number(declaredSize) > MAX_BYTES)
     throw new UploadError(413, "Each photo must be no larger than 8 MB.");
   if (!request.body) throw new UploadError(400, "Choose a nonempty photo.");
-  const reader = request.body.getReader();
+  let native: NativeByteReader | undefined;
+  try {
+    const candidate: NativeByteReader = request.body.getReader({
+      mode: "byob",
+    });
+    if (typeof candidate.readAtLeast === "function") native = candidate;
+    else candidate.releaseLock();
+  } catch {
+    // Next/Node and generic streams need the standard bounded reader below.
+  }
+  const fallback = native ? undefined : request.body.getReader();
+  const reader = native ?? fallback!;
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   const header = new Uint8Array(12);
   let total = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value.byteLength > MAX_BYTES - total) {
-        await reader.cancel().catch(() => undefined);
+    if (native) {
+      // Workers' native readAtLeast fills a bounded buffer in one operation,
+      // avoiding per-network-chunk JavaScript and extra image copies. A partial
+      // result means EOF; one byte beyond the accepted length is still denied.
+      const capacity =
+        declaredSize === null ? MAX_BYTES + 1 : Number(declaredSize) + 1;
+      const { value } = await native.readAtLeast!(
+        capacity,
+        new Uint8Array(capacity),
+      );
+      total = value?.byteLength ?? 0;
+      if (total > MAX_BYTES) {
+        await native.cancel().catch(() => undefined);
         throw new UploadError(413, "Each photo must be no larger than 8 MB.");
       }
-      if (total < header.length)
-        header.set(value.subarray(0, header.length - total), total);
-      total += value.byteLength;
-      chunks.push(new Uint8Array(value));
-    }
+      if (total === capacity) {
+        await native.cancel().catch(() => undefined);
+        throw new UploadError(400, "The photo request is invalid.");
+      }
+      if (value) {
+        header.set(value.subarray(0, header.length));
+        chunks.push(value);
+      }
+    } else
+      while (true) {
+        const { done, value } = await fallback!.read();
+        if (done) break;
+        if (value.byteLength > MAX_BYTES - total) {
+          await reader.cancel().catch(() => undefined);
+          throw new UploadError(413, "Each photo must be no larger than 8 MB.");
+        }
+        if (total < header.length)
+          header.set(value.subarray(0, header.length - total), total);
+        total += value.byteLength;
+        chunks.push(new Uint8Array(value));
+      }
   } catch (error) {
     if (error instanceof UploadError) throw error;
     throw new UploadError(400, "The photo could not be read. Please retry.");

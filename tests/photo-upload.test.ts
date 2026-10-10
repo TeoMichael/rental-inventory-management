@@ -187,6 +187,69 @@ afterEach(() => {
 });
 
 describe("photo upload authorization", () => {
+  it.each([false, true])(
+    "bounds a native byte-buffer read before provider upload (oversized: %s)",
+    async (oversized) => {
+      const bytes = new Uint8Array(oversized ? MAX_BYTES + 1 : 65_541);
+      bytes.set(PNG);
+      const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+        type: "bytes",
+        start(controller) {
+          controller.enqueue(bytes.slice(0, 3));
+          controller.enqueue(bytes.slice(3));
+          controller.close();
+        },
+      });
+      const getReader = stream.getReader.bind(stream);
+      const readAtLeast = vi.fn();
+      const cancel = vi.fn();
+      vi.spyOn(stream, "getReader").mockImplementation(((options?: {
+        mode?: string;
+      }) => {
+        if (options?.mode !== "byob") return getReader();
+        const reader = getReader();
+        // Model Cloudflare's documented partial-at-EOF contract. Node's
+        // standard minimum-read option instead rejects that partial result.
+        readAtLeast.mockImplementation(
+          async (minimum: number, buffer: Uint8Array<ArrayBuffer>) => {
+            let count = 0;
+            while (count < minimum) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer.set(value, count);
+              count += value.byteLength;
+            }
+            return { value: buffer.subarray(0, count), done: count === 0 };
+          },
+        );
+        cancel.mockImplementation(() => reader.cancel());
+        return { readAtLeast, cancel, releaseLock: () => reader.releaseLock() };
+      }) as typeof stream.getReader);
+      const source = request();
+      const response = await POST(
+        new Request(source.url, {
+          method: "POST",
+          headers: source.headers,
+          body: stream,
+          duplex: "half",
+        } as RequestInit),
+      );
+      expect(response.status).toBe(oversized ? 413 : 200);
+      expect(readAtLeast).toHaveBeenCalledOnce();
+      expect(readAtLeast.mock.calls[0][0]).toBe(MAX_BYTES + 1);
+      if (oversized) {
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(imageRequests()).toHaveLength(0);
+      } else {
+        expect(
+          new Uint8Array(
+            await (state.imageForms[0].get("file") as File).arrayBuffer(),
+          ),
+        ).toEqual(bytes);
+      }
+    },
+  );
+
   it("preserves a chunked binary image in a length-correct multipart request", async () => {
     const bytes = new Uint8Array(65_541);
     bytes.set(PNG);
