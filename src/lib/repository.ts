@@ -7,7 +7,6 @@ import {
   runTransaction,
   where,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebase } from "./firebase";
 import { friendlyError } from "./format";
 import {
@@ -37,6 +36,7 @@ import {
   validateDamageUpdate,
   validateItem,
   validatePhotoFiles,
+  validatePhotos,
   validateProperty,
   validateRoom,
   validateSnapshot,
@@ -236,7 +236,7 @@ export async function uploadPhotos(
 ): Promise<Photo[]> {
   requireSession(profile);
   validatePhotoFiles(files);
-  const { db, storage } = getFirebase();
+  const { db, auth } = getFirebase();
   const property = record<Property>(
     await getDoc(doc(db, "properties", propertyId)),
     "Property",
@@ -267,28 +267,35 @@ export async function uploadPhotos(
   let storedCount = 0;
   try {
     for (const file of files) {
-      const id = crypto.randomUUID();
-      const path = `properties/${propertyId}/${profile.id}/${id}`;
-      const fileRef = ref(storage, path);
-      await uploadBytes(fileRef, file, {
-        contentType: file.type,
-        ...(tenancyId ? { customMetadata: { tenancyId } } : {}),
+      const token = await auth.currentUser!.getIdToken();
+      const parameters = new URLSearchParams({ propertyId });
+      if (tenancyId) parameters.set("tenancyId", tenancyId);
+      const response = await fetch(`/api/photos?${parameters}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": file.type,
+          "X-File-Name": encodeURIComponent(file.name),
+        },
+        body: file,
       });
+      const result = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(
+          typeof result?.error === "string"
+            ? result.error
+            : "Photo upload could not finish. Please try again.",
+        );
+      const photo = validatePhotos([result as Photo], propertyId)[0];
       storedCount++;
-      uploaded.push({
-        id,
-        path,
-        name: file.name,
-        url: await getDownloadURL(fileRef),
-        createdAt: now(),
-      });
+      uploaded.push(photo);
     }
     return uploaded;
   } catch (error) {
     const reason = friendlyError(error);
     // Stored evidence cannot be physically deleted by clients. Nothing is attached to a record on failure.
     throw new Error(
-      `Photo upload failed. ${reason}${storedCount ? " Uploaded files were retained in Storage but were not attached; please retry your selection." : ""}`,
+      `Photo upload failed. ${reason}${storedCount ? " Uploaded files were retained but were not attached; please retry your selection." : ""}`,
     );
   }
 }

@@ -52,13 +52,35 @@ export function validatePhotos(photos: Photo[], propertyId?: string): Photo[] {
   return photos.map((photo) => {
     if (
       !photo ||
-      !photo.id ||
-      !photo.name ||
-      !photo.createdAt ||
-      !photo.path ||
-      !photo.url
+      typeof photo !== "object" ||
+      [photo.id, photo.name, photo.createdAt, photo.path, photo.url].some(
+        (value) => typeof value !== "string" || !value,
+      )
     )
       throw new Error("A photo is incomplete. Remove it and upload again.");
+    const keys = [
+      "id",
+      "url",
+      "path",
+      "name",
+      "createdAt",
+      "provider",
+      "fileId",
+    ];
+    if (Object.keys(photo).some((key) => !keys.includes(key)))
+      throw new Error("A photo is invalid. Remove it and upload again.");
+    const imagekit =
+      Object.hasOwn(photo, "provider") || Object.hasOwn(photo, "fileId");
+    if (
+      imagekit &&
+      (photo.provider !== "imagekit" ||
+        typeof photo.fileId !== "string" ||
+        !photo.fileId.trim() ||
+        photo.fileId.length > 128)
+    )
+      throw new Error(
+        "A photo's ImageKit metadata is invalid. Remove it and upload again.",
+      );
     const parts = photo.path.split("/");
     if (
       photo.id.length > 128 ||
@@ -85,6 +107,9 @@ export function validatePhotos(photos: Photo[], propertyId?: string): Photo[] {
       path: photo.path,
       url: photo.url,
       createdAt: photo.createdAt,
+      ...(imagekit
+        ? { provider: "imagekit" as const, fileId: photo.fileId! }
+        : {}),
     };
   });
 }

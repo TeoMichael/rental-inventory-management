@@ -1,14 +1,59 @@
 rules_version = '2';
 service cloud.firestore {
+  // Every boolean list requires true for every element. False or type/missing
+  // field errors deny the write, preserving the conjunctions' authorization.
+  // RE2 counts codepoints, whereas String.size() counts UTF16 units. Replacing
+  // each astral codepoint with two BMP characters preserves the original bounds.
+  // Original strings remain in path splits and relationship equality checks.
+  // Required fields exhaust a five-field record or the optional seven-field
+  // ImageKit pair. Unknown or replaced fields therefore fail validation.
+  function photo(record, propertyId) {
+    return [record.size() <= 7,
+    (record.size() == 5 || [record.provider == 'imagekit', record.fileId.size() <= 128, record.fileId.matches('.*[^\\s].*')].hasOnly([true])),
+    record.name.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,255}'),
+    record.url.size() <= 2048,
+    record.url.matches('^(https://|http://127[.]0[.]0[.]1(:[0-9]+)?/).*'),
+    record.createdAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+    record.path.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('properties/[^/]+/[^/]{1,128}/[^/]{1,128}'),
+    record.path.split('/')[1] == propertyId,
+    record.path.split('/')[3] == record.id].hasOnly([true]);
+  }
+  function photos() {
+    let list = request.resource.data.photos;
+    let property = request.resource.data.propertyId;
+    let count = list.size();
+    // At ten, every index exists. Shorter lists retain per-index guards.
+    // The explicit list type check remains in both branches.
+    return count == 10
+      ? [list is list,
+        photo(list[0], property), photo(list[1], property),
+        photo(list[2], property), photo(list[3], property),
+        photo(list[4], property), photo(list[5], property),
+        photo(list[6], property), photo(list[7], property),
+        photo(list[8], property), photo(list[9], property)].hasOnly([true])
+      : [list is list, count <= 10,
+        (count < 1 || photo(list[0], property)),
+        (count < 2 || photo(list[1], property)),
+        (count < 3 || photo(list[2], property)),
+        (count < 4 || photo(list[3], property)),
+        (count < 5 || photo(list[4], property)),
+        (count < 6 || photo(list[5], property)),
+        (count < 7 || photo(list[6], property)),
+        (count < 8 || photo(list[7], property)),
+        (count < 9 || photo(list[8], property)),
+        (count < 10 || photo(list[9], property))].hasOnly([true]);
+  }
+
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
     function landlord() { return signedIn() && get(userPath()).data.role == 'landlord'; }
     function tenant() {
-      return signedIn() && request.auth.token.email_verified == true
-        && get(userPath()).data.role == 'tenant'
-        && get(userPath()).data.email == request.auth.token.email;
+      let profile = get(userPath()).data;
+      return [signedIn(), request.auth.token.email_verified == true,
+        profile.role == 'tenant', profile.email == request.auth.token.email].hasOnly([true]);
     }
+
     function tenantEmail(email) { return tenant() && request.auth.token.email == email; }
     function owns(data) { return landlord() && data.ownerId == request.auth.uid; }
     function readable(data) { return owns(data) || tenantEmail(data.tenantEmail); }
@@ -24,47 +69,31 @@ service cloud.firestore {
         && get(propertyPath(id)).data.archived == false);
     }
     function text(value, max) { return value is string && value.size() <= max; }
-    function requiredText(value, max) { return text(value, max) && value.size() > 0; }
+    function requiredText(value, max) { return value is string && value.size() > 0 && value.size() <= max; }
     function iso(value) {
-      return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$');
+      return value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$');
     }
     function date(value) { return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
-    function email(value) { return requiredText(value, 254) && value.matches('^[^ @]+@[^ @]+[.][^ @]+$'); }
-    function condition(value) { return value in ['New', 'Good', 'Fair', 'Damaged', 'Broken']; }
-    function base(data, id) {
-      return data.id == id && requiredText(data.ownerId, 128)
-        && iso(data.createdAt) && iso(data.updatedAt) && data.archived is bool;
+    function email(value) { return value.size() <= 254 && value.matches('^[^ @]+@[^ @]+[.][^ @]+$'); }
+    function condition(value) { return value.matches('New|Good|Fair|Damaged|Broken'); }
+    function base(id) {
+      let record = request.resource.data;
+      return [record.id == id,
+        record.ownerId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        iso(record.createdAt),
+        iso(record.updatedAt),
+        record.archived is bool].hasOnly([true]);
     }
-    function initial(data, id) { return base(data, id) && owns(data) && data.archived == false; }
-    function stable(data) {
-      return data.id == resource.data.id && data.ownerId == resource.data.ownerId
-        && data.createdAt == resource.data.createdAt
-        && (resource.data.archived == false || data.archived == true);
-    }
-    function photo(data, propertyId) {
-      return data is map && data.keys().hasAll(['id', 'url', 'path', 'name', 'createdAt'])
-        && data.keys().hasOnly(['id', 'url', 'path', 'name', 'createdAt'])
-        && requiredText(data.id, 128) && requiredText(data.name, 255)
-        && text(data.url, 2048) && (data.url.matches('^https://.*') || data.url.matches('^http://127[.]0[.]0[.]1(:[0-9]+)?/.*')) && iso(data.createdAt)
-        && data.path is string && data.path.split('/').size() == 4
-        && data.path.split('/')[0] == 'properties' && data.path.split('/')[1] == propertyId
-        && requiredText(data.path.split('/')[2], 128) && data.path.split('/')[3] == data.id;
-    }
-    function photos(data, propertyId) {
-      return data is list && data.size() <= 10
-        && (data.size() < 1 || photo(data[0], propertyId))
-        && (data.size() < 2 || photo(data[1], propertyId))
-        && (data.size() < 3 || photo(data[2], propertyId))
-        && (data.size() < 4 || photo(data[3], propertyId))
-        && (data.size() < 5 || photo(data[4], propertyId))
-        && (data.size() < 6 || photo(data[5], propertyId))
-        && (data.size() < 7 || photo(data[6], propertyId))
-        && (data.size() < 8 || photo(data[7], propertyId))
-        && (data.size() < 9 || photo(data[8], propertyId))
-        && (data.size() < 10 || photo(data[9], propertyId));
+    // Every create also runs its record validator, which checks base(id).
+    function initial(data) { return [owns(data),
+        data.archived == false].hasOnly([true]); }
+    function stable() {
+      let record = request.resource.data;
+      return [!record.diff(resource.data).affectedKeys().hasAny(['id', 'ownerId', 'createdAt']),
+        (resource.data.archived == false || record.archived == true)].hasOnly([true]);
     }
     function propertyValid(data, id) {
-      return base(data, id)
+      return base(id)
         && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'name', 'address', 'description', 'propertyType'])
         && requiredText(data.name, 200) && text(data.address, 500) && text(data.description, 5000)
         && requiredText(data.propertyType, 100);
@@ -75,26 +104,59 @@ service cloud.firestore {
         && data.tenantEmails is list && data.tenantEmails.size() <= 200;
     }
     function roomValid(data, id) {
-      return base(data, id)
+      return base(id)
         && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'name', 'description'])
         && requiredText(data.propertyId, 128) && requiredText(data.name, 200) && text(data.description, 5000);
     }
-    function itemValid(data, id) {
-      return base(data, id)
-        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'roomId', 'name', 'category', 'quantity', 'condition', 'description', 'estimatedValue', 'photos'])
-        && requiredText(data.propertyId, 128) && requiredText(data.roomId, 128)
-        && requiredText(data.name, 200) && text(data.description, 5000)
-        && data.category in ['Furniture', 'Appliance', 'Electronics', 'Kitchen Equipment', 'Bathroom Equipment', 'Decoration', 'Other']
-        && data.quantity is int && data.quantity >= 1 && data.quantity <= 10000 && condition(data.condition)
-        && (data.estimatedValue == null || (data.estimatedValue is number && data.estimatedValue >= 0 && data.estimatedValue <= 1000000000000))
-        && photos(data.photos, data.propertyId);
+    function itemValid(id) {
+      let record = request.resource.data;
+      let quantity = record.quantity;
+      let value = record.estimatedValue;
+      return [record.id == id,
+        record.ownerId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.createdAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+        record.updatedAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+        record.archived is bool,
+        record.size() == 14,
+        record.propertyId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.roomId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.name.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,200}'),
+        (record.description is string && record.description.size() <= 5000),
+        record.category.matches('Furniture|Appliance|Electronics|Kitchen Equipment|Bathroom Equipment|Decoration|Other'),
+        quantity is int,
+        quantity >= 1,
+        quantity <= 10000,
+        record.condition.matches('New|Good|Fair|Damaged|Broken'),
+        (value == null || (value is number && value >= 0 && value <= 1000000000000)),
+        photos()].hasOnly([true]);
     }
-    function itemRoom(data) {
-      let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
-      return owns(room) && room.propertyId == data.propertyId && room.archived == false;
+    function itemRoom() {
+      let record = request.resource.data;
+      let room = get(/databases/$(database)/documents/rooms/$(record.roomId)).data;
+      let property = get(propertyPath(record.propertyId)).data;
+      // Item writes already establish landlord ownership of data.
+      return [room.ownerId == record.ownerId,
+        room.propertyId == record.propertyId,
+        room.archived == false,
+        property.ownerId == record.ownerId,
+        property.archived == false].hasOnly([true]);
+    }
+    function itemCreate(id) {
+      let record = request.resource.data;
+      return [initial(record),
+        itemValid(id),
+        itemRoom()].hasOnly([true]);
+    }
+    function itemUpdate(id) {
+      let record = request.resource.data;
+      return [owns(resource.data),
+        stable(),
+        itemValid(id),
+        record.propertyId == resource.data.propertyId,
+        itemRoom()].hasOnly([true]);
     }
     function tenancyValid(data, id) {
-      return base(data, id)
+      return base(id)
         && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'tenantName', 'tenantEmail', 'phone', 'startDate', 'endDate', 'status'])
         && requiredText(data.propertyId, 128) && requiredText(data.tenantName, 200)
         && email(data.tenantEmail) && text(data.phone, 80) && date(data.startDate)
@@ -106,7 +168,7 @@ service cloud.firestore {
         || data.tenantEmail in getAfter(accessPath(data.propertyId)).data.tenantEmails;
     }
     function inspectionValid(data, id) {
-      return base(data, id)
+      return base(id)
         && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'tenancyId', 'tenantEmail', 'type', 'inspectedAt', 'confirmed', 'confirmedAt', 'confirmedBy', 'itemCount'])
         && requiredText(data.propertyId, 128) && requiredText(data.tenancyId, 128) && email(data.tenantEmail)
         && data.type in ['check-in', 'check-out'] && id == data.tenancyId + '_' + data.type
@@ -120,40 +182,76 @@ service cloud.firestore {
       return owns(tenancy) && tenancy.archived == false && tenancy.propertyId == data.propertyId
         && tenancy.tenantEmail == data.tenantEmail && tenancy.status != 'Cancelled';
     }
-    function snapshotValid(data, id) {
-      return base(data, id)
-        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'inspectionId', 'tenancyId', 'tenantEmail', 'itemId', 'itemName', 'roomName', 'quantity', 'condition', 'notes', 'photos', 'inspectedAt'])
-        && requiredText(data.propertyId, 128) && requiredText(data.inspectionId, 256)
-        && requiredText(data.tenancyId, 128) && email(data.tenantEmail) && requiredText(data.itemId, 128)
-        && id == data.inspectionId + '_' + data.itemId
-        && requiredText(data.itemName, 200) && requiredText(data.roomName, 200)
-        && data.quantity is int && data.quantity >= 1 && data.quantity <= 10000
-        && condition(data.condition) && text(data.notes, 5000) && photos(data.photos, data.propertyId) && iso(data.inspectedAt);
+    function snapshotValid(id) {
+      let record = request.resource.data;
+      return [record.id == id,
+        record.ownerId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.createdAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+        record.updatedAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+        record.archived is bool,
+        record.size() == 17,
+        record.propertyId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.inspectionId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,256}'),
+        record.tenancyId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        email(record.tenantEmail),
+        record.itemId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        id == record.inspectionId + '_' + record.itemId,
+        record.itemName.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,200}'),
+        record.roomName.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,200}'),
+        record.quantity is int,
+        record.quantity >= 1,
+        record.quantity <= 10000,
+        record.condition.matches('New|Good|Fair|Damaged|Broken'),
+        (record.notes is string && record.notes.size() <= 5000),
+        photos(),
+        iso(record.inspectedAt)].hasOnly([true]);
     }
     function atomicSnapshot(data) {
-      let parentPath = /databases/$(database)/documents/inspections/$(data.inspectionId);
+      let record = data;
+      let parentPath = /databases/$(database)/documents/inspections/$(record.inspectionId);
       let parent = getAfter(parentPath).data;
-      return !exists(parentPath) && owns(parent) && parent.propertyId == data.propertyId
-        && parent.tenancyId == data.tenancyId && parent.tenantEmail == data.tenantEmail
-        && parent.inspectedAt == data.inspectedAt && parent.createdAt == data.createdAt;
+      return [!exists(parentPath),
+        parent.ownerId == record.ownerId,
+        parent.propertyId == record.propertyId,
+        parent.tenancyId == record.tenancyId,
+        parent.tenantEmail == record.tenantEmail,
+        parent.inspectedAt == record.inspectedAt,
+        parent.createdAt == record.createdAt].hasOnly([true]);
     }
-    function damageValid(data, id) {
-      return base(data, id)
-        && data.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'propertyId', 'tenancyId', 'tenantEmail', 'itemId', 'itemName', 'description', 'photos', 'status', 'ownerNotes', 'reportedBy'])
-        && requiredText(data.propertyId, 128) && requiredText(data.tenancyId, 128) && email(data.tenantEmail)
-        && requiredText(data.itemId, 128) && requiredText(data.itemName, 200)
-        && requiredText(data.description, 5000) && photos(data.photos, data.propertyId)
-        && data.status in ['Reported', 'Checking', 'Repairing', 'Resolved']
-        && text(data.ownerNotes, 5000) && requiredText(data.reportedBy, 128);
+    // Create checks archived=false, status=Reported, and ownerNotes='' itself.
+    // Updates apply their original type/enum/length checks in damageValid().
+    function damageBody(id) {
+      let record = request.resource.data;
+      return [record.id == id,
+        record.ownerId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.createdAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+        record.updatedAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'),
+        record.size() == 15,
+        record.propertyId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.tenancyId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.tenantEmail.size() <= 254, record.tenantEmail.matches('^[^ @]+@[^ @]+[.][^ @]+$'),
+        record.itemId.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}'),
+        record.itemName.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,200}'),
+        record.description is string, record.description.size() > 0, record.description.size() <= 5000,
+        photos(),
+        record.reportedBy.replace('[\\x{10000}-\\x{10ffff}]', 'aa').matches('[\\s\\S]{1,128}')].hasOnly([true]);
     }
-    function damageRelationships(data) {
-      let tenancy = get(/databases/$(database)/documents/tenancies/$(data.tenancyId)).data;
-      let item = get(/databases/$(database)/documents/items/$(data.itemId)).data;
-      return tenancy.tenantEmail == request.auth.token.email && tenancy.status == 'Active' && tenancy.archived == false
-        && tenancy.propertyId == data.propertyId && tenancy.ownerId == data.ownerId
-        && item.propertyId == data.propertyId && item.ownerId == data.ownerId && item.archived == false
-        && item.name == data.itemName && get(propertyPath(data.propertyId)).data.archived == false;
+    function damageValid(id) {
+      let record = request.resource.data;
+      return [damageBody(id), record.archived is bool, record.status.matches('Reported|Checking|Repairing|Resolved'),
+        record.ownerNotes is string, record.ownerNotes.size() <= 5000].hasOnly([true]);
     }
+
+    // Ordered equality checks the same scalar pairs as individual equalities.
+    function damageRelationships(record) {
+      let tenancy = get(/databases/$(database)/documents/tenancies/$(record.tenancyId)).data;
+      let item = get(/databases/$(database)/documents/items/$(record.itemId)).data;
+      return [tenancy.tenantEmail, tenancy.status, tenancy.archived, tenancy.propertyId, tenancy.ownerId,
+        item.propertyId, item.ownerId, item.archived, item.name, get(propertyPath(record.propertyId)).data.archived]
+        == [request.auth.token.email, 'Active', false, record.propertyId, record.ownerId,
+          record.propertyId, record.ownerId, false, record.itemName, false];
+    }
+
 
     match /users/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
@@ -169,8 +267,8 @@ service cloud.firestore {
     }
     match /properties/{id} {
       allow read: if owns(resource.data) || (tenant() && propertyReader(id));
-      allow create: if initial(request.resource.data, id) && propertyValid(request.resource.data, id);
-      allow update: if owns(resource.data) && stable(request.resource.data) && propertyValid(request.resource.data, id);
+      allow create: if initial(request.resource.data) && propertyValid(request.resource.data, id);
+      allow update: if owns(resource.data) && stable() && propertyValid(request.resource.data, id);
     }
     match /propertyAccess/{id} {
       // Owners can also read an absent grant when a transaction prepares its first invitation.
@@ -183,22 +281,20 @@ service cloud.firestore {
     }
     match /rooms/{id} {
       allow read: if owns(resource.data) || (resource.data.archived == false && propertyReader(resource.data.propertyId));
-      allow create: if initial(request.resource.data, id) && roomValid(request.resource.data, id) && activePropertyOwner(request.resource.data.propertyId);
-      allow update: if owns(resource.data) && stable(request.resource.data) && roomValid(request.resource.data, id)
+      allow create: if initial(request.resource.data) && roomValid(request.resource.data, id) && activePropertyOwner(request.resource.data.propertyId);
+      allow update: if owns(resource.data) && stable() && roomValid(request.resource.data, id)
         && request.resource.data.propertyId == resource.data.propertyId && activePropertyOwner(resource.data.propertyId);
     }
     match /items/{id} {
       allow read: if owns(resource.data) || (resource.data.archived == false && propertyReader(resource.data.propertyId));
-      allow create: if initial(request.resource.data, id) && itemValid(request.resource.data, id)
-        && activePropertyOwner(request.resource.data.propertyId) && itemRoom(request.resource.data);
-      allow update: if owns(resource.data) && stable(request.resource.data) && itemValid(request.resource.data, id)
-        && request.resource.data.propertyId == resource.data.propertyId && activePropertyOwner(resource.data.propertyId) && itemRoom(request.resource.data);
+      allow create: if itemCreate(id);
+      allow update: if itemUpdate(id);
     }
     match /tenancies/{id} {
       allow read: if readable(resource.data);
-      allow create: if initial(request.resource.data, id) && tenancyValid(request.resource.data, id)
+      allow create: if initial(request.resource.data) && tenancyValid(request.resource.data, id)
         && activePropertyOwner(request.resource.data.propertyId) && tenancyGrant(request.resource.data);
-      allow update: if owns(resource.data) && stable(request.resource.data) && tenancyValid(request.resource.data, id)
+      allow update: if owns(resource.data) && stable() && tenancyValid(request.resource.data, id)
         && request.resource.data.propertyId == resource.data.propertyId && request.resource.data.tenantEmail == resource.data.tenantEmail
         && propertyOwner(resource.data.propertyId) && tenancyGrant(request.resource.data);
     }
@@ -206,7 +302,7 @@ service cloud.firestore {
       // Transactions must be able to prove that a deterministic handover ID is unused.
       allow get: if landlord() && !exists(/databases/$(database)/documents/inspections/$(id));
       allow read: if readable(resource.data);
-      allow create: if initial(request.resource.data, id) && inspectionValid(request.resource.data, id)
+      allow create: if initial(request.resource.data) && inspectionValid(request.resource.data, id)
         && activePropertyOwner(request.resource.data.propertyId) && inspectionTenancy(request.resource.data)
         && (request.resource.data.type == 'check-in'
           || exists(/databases/$(database)/documents/inspections/$(request.resource.data.tenancyId + '_check-in')))
@@ -221,14 +317,18 @@ service cloud.firestore {
       allow read: if readable(resource.data);
       // Item IDs are historical references. The owner may record text without looking up live inventory.
       // The client validates current items; omitting per-item reads keeps atomic handovers within rule access limits.
-      allow create: if initial(request.resource.data, id) && snapshotValid(request.resource.data, id) && atomicSnapshot(request.resource.data);
+      allow create: if initial(request.resource.data) && snapshotValid(id) && atomicSnapshot(request.resource.data);
     }
     match /damageReports/{id} {
       allow read: if readable(resource.data);
-      allow create: if tenantEmail(request.resource.data.tenantEmail) && damageValid(request.resource.data, id)
-        && request.resource.data.archived == false && request.resource.data.reportedBy == request.auth.uid
-        && request.resource.data.status == 'Reported' && request.resource.data.ownerNotes == '' && damageRelationships(request.resource.data);
-      allow update: if owns(resource.data) && damageValid(request.resource.data, id)
+      allow create: if [tenantEmail(request.resource.data.tenantEmail),
+        damageBody(id),
+        request.resource.data.archived == false,
+        request.resource.data.reportedBy == request.auth.uid,
+        request.resource.data.status == 'Reported',
+        request.resource.data.ownerNotes == '',
+        damageRelationships(request.resource.data)].hasOnly([true]);
+      allow update: if owns(resource.data) && damageValid(id)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'ownerNotes', 'updatedAt']);
     }
     // No delete grants: archival preserves tenancy, inspection, and photo references.

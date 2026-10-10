@@ -5,6 +5,7 @@ import {
   validateDamage,
   validateItem,
   validatePhotoFiles,
+  validatePhotos,
   validateProperty,
   validateSnapshot,
   validateTenancy,
@@ -66,16 +67,10 @@ const harness = vi.hoisted(() => ({
       },
     },
     db: {},
-    storage: {},
   },
   nextId: 0,
 }));
 vi.mock("../src/lib/firebase", () => ({ getFirebase: () => harness.services }));
-vi.mock("firebase/storage", () => ({
-  getDownloadURL: vi.fn(),
-  ref: vi.fn(),
-  uploadBytes: vi.fn(),
-}));
 vi.mock("firebase/firestore", () => ({
   collection: (_db: unknown, path: string) => ({ path }),
   doc: (source: { path?: string }, ...parts: string[]): TestReference => {
@@ -187,6 +182,12 @@ const photo: Photo = {
   name: "photo.jpg",
   createdAt: "2026-01-01T00:00:00.000Z",
 };
+const imagekitPhoto: Photo = {
+  ...photo,
+  url: "https://ik.imagekit.io/rental/photo.jpg",
+  provider: "imagekit",
+  fileId: "imagekit-file-1",
+};
 
 describe("inventory validation", () => {
   it("normalizes user text and email without changing the source", () => {
@@ -283,6 +284,85 @@ describe("tenancy and reports", () => {
 });
 
 describe("historical snapshots and photos", () => {
+  it("preserves both legacy and paired ImageKit photo metadata without sharing objects", () => {
+    const result = validatePhotos([photo, imagekitPhoto], "property-1");
+    expect(result).toEqual([photo, imagekitPhoto]);
+    expect(result[0]).not.toBe(photo);
+    expect(result[1]).not.toBe(imagekitPhoto);
+    expect(result[0]).not.toHaveProperty("provider");
+    expect(
+      validatePhotos([{ ...imagekitPhoto, fileId: "a".repeat(128) }])[0].fileId,
+    ).toHaveLength(128);
+  });
+
+  it.each([
+    { provider: "imagekit" },
+    { fileId: "file-only" },
+    { provider: "another-service", fileId: "file-1" },
+    { provider: "imagekit", fileId: null },
+    { provider: "imagekit", fileId: 123 },
+    { provider: "imagekit", fileId: "" },
+    { provider: "imagekit", fileId: " \t\n" },
+    { provider: "imagekit", fileId: "a".repeat(129) },
+    { provider: "imagekit", fileId: "file-1", unexpected: true },
+  ])("rejects invalid or extra provider metadata %j", (metadata) => {
+    expect(() =>
+      validatePhotos([{ ...photo, ...metadata } as unknown as Photo]),
+    ).toThrow("invalid");
+  });
+
+  it("rejects ImageKit metadata scoped to another property in inventory, snapshots, and reports", () => {
+    const foreign = {
+      ...imagekitPhoto,
+      path: "properties/property-2/tenant-1/photo-1",
+    };
+    expect(() => validateItem({ ...item, photos: [foreign] })).toThrow(
+      "Photos must belong",
+    );
+    expect(() =>
+      validateSnapshot(
+        {
+          itemId: "item-1",
+          itemName: item.name,
+          roomName: "Kitchen",
+          quantity: 1,
+          condition: "Good",
+          notes: "",
+          photos: [foreign],
+        },
+        "property-1",
+      ),
+    ).toThrow("Photos must belong");
+    expect(() =>
+      validateDamage({
+        propertyId: "property-1",
+        tenancyId: "tenancy-1",
+        itemId: "item-1",
+        description: "Door dent",
+        photos: [foreign],
+      }),
+    ).toThrow("Photos must belong");
+  });
+
+  it("rejects eleven stored photos before an inventory or snapshot save", () => {
+    const photos = Array.from({ length: 11 }, () => ({ ...imagekitPhoto }));
+    expect(() => validateItem({ ...item, photos })).toThrow("10 photos");
+    expect(() =>
+      validateSnapshot(
+        {
+          itemId: "item-1",
+          itemName: item.name,
+          roomName: "Kitchen",
+          quantity: 1,
+          condition: "Good",
+          notes: "",
+          photos,
+        },
+        "property-1",
+      ),
+    ).toThrow("10 photos");
+  });
+
   it("copies photo metadata so changes to a live form cannot mutate a snapshot", () => {
     const live = {
       itemId: "item-1",
@@ -703,7 +783,7 @@ describe("service data integrity with atomic transaction doubles", () => {
       quantity: 1,
       condition: "Good",
       notes: "No dents",
-      photos: [{ ...photo }],
+      photos: [{ ...imagekitPhoto }],
     };
     const inspectionId = await createInspection(
       owner,
@@ -726,6 +806,7 @@ describe("service data integrity with atomic transaction doubles", () => {
     expect(snapshot.quantity).toBe(1);
     expect(snapshot.condition).toBe("Good");
     expect((snapshot.photos as Photo[])[0].name).toBe("photo.jpg");
+    expect(snapshot.photos).toEqual([imagekitPhoto]);
     await expect(
       createInspection(owner, activeTenancy, "check-in", [input]),
     ).rejects.toThrow("cannot be overwritten");

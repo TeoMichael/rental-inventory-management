@@ -40,7 +40,7 @@ export function friendlyError(error: unknown) {
     "permission-denied":
       "Access denied. Check your account permissions and deployed Firebase rules.",
     "storage/unauthorized":
-      "Photo upload denied. Check your tenancy and Storage rules.",
+      "Photo upload denied. Check your account permissions and tenancy.",
     "storage/retry-limit-exceeded":
       "Photo upload could not finish. Check your connection and try again.",
     "storage/canceled": "Photo upload was canceled. Please try again.",

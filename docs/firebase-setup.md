@@ -1,88 +1,80 @@
 # Firebase setup
 
-This guide applies to the frozen [MVP v0.1.0 baseline](release-v0.1.0.md). Local authorization tests passed; production Firebase integration still requires project configuration and validation. Release finalization does not change Firebase configuration or security rules.
+This guide covers the active free-infrastructure migration. The immutable [v0.1.0 baseline](release-v0.1.0.md) used Firebase Storage; new uploads use the server ImageKit proxy. Storage rules and emulator tests remain for historical protection. No production Storage bucket, paid Firebase feature, or billing account is required by the migration.
 
-## Create the project
+## Current production project
 
-1. Create a Firebase project and register a Web app in the [Firebase console](https://console.firebase.google.com/).
-2. Enable Authentication → Sign-in method → Email/Password. Add the deployed site's domain to Authentication's authorized domains. Add `localhost` for local development if it is not already listed.
-3. Create the default Cloud Firestore database in a suitable region. Start with locked rules, then deploy this repository's rules.
-4. Enable Cloud Storage. Select the appropriate region and use the Blaze plan required by Firebase for Storage. Use the bucket name shown in the console rather than assuming an `appspot.com` suffix.
-5. Copy `.env.example` to `.env.local` and fill in the Web app's public configuration:
+`keyline-rental-inventory-prod` has Web app `1:401046214045:web:8862e7ce62363252858b74`. Ordinary Email/Password Authentication is enabled. Default Firestore uses Standard edition in `asia-southeast1` (Singapore) and reports `freeTier: true`. API checks confirm billing disabled and no linked account. Updated ImageKit-compatible Firestore rules and indexes are deployed; an independent API check matches the local rules source, and composite indexes are ready. The correction preserves UTF16 bounds and strict schemas while accepting ten five-field photos across inventory, inspections, and reports. All 40 rules tests passed, including mixed paired/five-field metadata, and the script passed again after configuration cleanup. Owner uploads, inventory, check-in/check-out and retained snapshot photos passed. A registered tenant verified the real email, accessed assigned records, confirmed check-in and saved/reloaded real ImageKit report evidence. After tenancy completion, live inventory cleared and new uploads were denied, while snapshots, the Repairing report, owner note and images remained readable. All 37 fresh live security/retention checks passed; live requests also saved/read back two and ten mixed photos and denied malformed metadata. The local ImageKit phase is complete against live backends. Deployed email actions/domains and complete Cloudflare browser workflows remain pending.
+
+The console encountered a terms-status loading problem. Auth was enabled through supported free CLI provisioning. Do not initialize Identity Platform or link billing as a workaround. Firebase's [Terraform codelab](https://firebase.google.com/codelabs/firebase-terraform) distinguishes ordinary free Authentication from GCIP setup requiring Blaze.
+
+## Configure another Spark project
+
+Register a Web app in the [Firebase console](https://console.firebase.google.com/). Enable Email/Password in Authentication, or use the documented CLI path, selecting Email/Password only:
+
+```sh
+pnpm exec firebase init auth --project YOUR_PROJECT_ID
+pnpm exec firebase deploy --only auth --project YOUR_PROJECT_ID
+```
+
+The CLI may offer a free default Hosting site for Auth handlers; the application can still be hosted on Cloudflare. Preserve existing Firestore settings when initializing Auth. [Password-auth guide](https://firebase.google.com/docs/auth/web/password-auth), [CLI release notes](https://firebase.google.com/support/release-notes/cli).
+
+List databases before creating the first one. Do not create additional databases or enable PITR, backups, TTL, restore, or clone:
+
+```sh
+pnpm exec firebase firestore:databases:list --project YOUR_PROJECT_ID
+pnpm exec firebase firestore:databases:create "(default)" --location asia-southeast1 --edition standard --point-in-time-recovery DISABLED --project YOUR_PROJECT_ID
+pnpm exec firebase deploy --only firestore:rules,firestore:indexes --project YOUR_PROJECT_ID
+```
+
+The first database has free quota; additional databases and those features require billing. New databases start with closed rules. Await index readiness before tenant checks. Deploy only Firestore rules/indexes. Production `firebase.json` contains Auth/Firestore configuration only. Historical Storage rules and emulator checks use the separate `firebase.emulators.json` configuration and do not require a production bucket. [Database management](https://firebase.google.com/docs/firestore/manage-databases), [Free quota](https://firebase.google.com/docs/firestore/pricing).
+
+## Public application settings
+
+Copy `.env.example` to `.env.local` and fill the public Web configuration:
 
 ```dotenv
 NEXT_PUBLIC_FIREBASE_API_KEY=your-web-api-key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-console-bucket-name
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
-NEXT_PUBLIC_FIREBASE_APP_ID=your-app-id
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=keyline-rental-inventory-prod.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=keyline-rental-inventory-prod
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=401046214045
+NEXT_PUBLIC_FIREBASE_APP_ID=1:401046214045:web:8862e7ce62363252858b74
 NEXT_PUBLIC_USE_FIREBASE_EMULATORS=false
 ```
 
-The Web configuration identifies the Firebase project and is intentionally public. Security Rules protect the data. Never put service-account keys, private signing keys, or admin credentials in `NEXT_PUBLIC_` variables. `.env.local` and other actual environment files are ignored by Git; only the empty example is tracked. The messaging sender ID is included for completeness and is not used by this MVP.
+The Web API key identifies the project; rules protect the data. No admin/service-account credentials are needed. Keep private ImageKit settings out of every `.env*` file because OpenNext embeds file values in build output. Use ignored `.dev.vars` locally and Cloudflare runtime secrets in production; see [production deployment](production-deployment.md). Restart after public settings change.
 
-Restart Next.js after changing environment variables. Without configuration, the application presents setup guidance and can still build; that does not verify a live Firebase connection.
+Add the eventual deployed hostname to Auth authorized domains and verify email action URLs. Tenants must use the invited email and verify it before inventory access, confirmation, or reporting. Refresh verification after following the link. The live test tenant's email is verified; deployed email action/domain checks remain pending.
 
-## Deploy access rules and indexes
+## Local emulators and rule verification
 
-From the repository root with Node.js, npm, and the dependencies installed:
-
-```sh
-npx firebase login
-npx firebase deploy --project YOUR_PROJECT_ID --only firestore:rules,firestore:indexes,storage
-```
-
-The repository does not select a production project implicitly. `firebase.json` points to `firestore.rules`, `firestore.indexes.json`, and `storage.rules`. During the first Storage deployment, Firebase may ask to authorize Storage Rules to access Firestore; approve that product integration for this project. Wait for the inventory composite indexes to finish building before exercising tenant room/item queries.
-
-Use the committed rules rather than open test-mode rules. Landlord access is scoped by immutable `ownerId`; tenant data requires verified matching email. New tenants must register with the exact email invited by the landlord and verify the email before accessing inventory, confirming check-in, or reporting damage. Refresh the app's verification state after following the emailed verification link.
-
-## Local emulators
-
-Install a current Java runtime supported by Firebase's Firestore emulator (Java 21 or later) and keep `java` on `PATH`. The first run downloads emulator binaries and requires network access. The repository binds local emulators to loopback only:
-
-| Service        | Address          |
-| -------------- | ---------------- |
-| Authentication | `127.0.0.1:9099` |
-| Firestore      | `127.0.0.1:8080` |
-| Storage        | `127.0.0.1:9199` |
-
-Start all three when manually exercising the app:
+Java 21+ must be on `PATH`; the first run downloads binaries. The active app needs Auth at `127.0.0.1:9099` and Firestore at `127.0.0.1:8080`:
 
 ```sh
-npx firebase emulators:start --project demo-rental-inventory --only auth,firestore,storage
+pnpm exec firebase emulators:start --project demo-rental-inventory --only auth,firestore
 ```
 
-Use local-only `.env.local` values, then restart the app:
+Use a `demo-` project, matching public placeholder settings, and `NEXT_PUBLIC_USE_FIREBASE_EMULATORS=true`. Never deploy with that flag enabled. Auth prints verification links. Persist data only with explicit import/export options; keep exports ignored and shut down gracefully.
 
-```dotenv
-NEXT_PUBLIC_FIREBASE_API_KEY=demo-api-key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-rental-inventory.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-rental-inventory
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-rental-inventory.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
-NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:demo
-NEXT_PUBLIC_USE_FIREBASE_EMULATORS=true
-```
-
-These values target a `demo-` project and do not authorize production access. The Authentication emulator prints email verification links in its terminal output. Emulators do not persist data across runs unless explicitly started with import/export options. Never enable `NEXT_PUBLIC_USE_FIREBASE_EMULATORS` for a deployed site.
-
-To retain a local demo, start with `--export-on-exit .firebase/demo-export` and later add `--import .firebase/demo-export`. Export needs a graceful shutdown; an interrupted process can lose in-memory records. Keep exports outside Git because they may contain account and record data.
-
-## Rule verification
+Image uploads are not Firebase-emulated on this branch. They need real ImageKit configuration and consume its quota even with emulated Auth/Firestore. Historical Storage verification uses `firebase.emulators.json`, which adds Storage at `127.0.0.1:9199` without restoring a production Storage dependency.
 
 ```sh
-npm run test:rules
+pnpm test:rules
 ```
 
-This command starts only the Firestore and Storage emulators with the isolated `demo-rental-rules` test project, runs Vitest authorization tests, then shuts the emulators down. It does not need real project credentials. Avoid another emulator instance using the same ports. The tests clear only that test project's Firestore data and Storage bucket. They cover unauthorized reads/writes, private invitation lists, archived inventory, ownership and role tampering, tenant email verification, parent consistency, atomic snapshots, check-out ordering, tenant confirmation, damage-report integrity, and Storage upload validation/retention.
+The script selects `firebase.emulators.json`, uses `demo-rental-rules`, starts Firestore/Storage, runs authorization tests, and stops them. It clears only the test project's data and needs no production credentials. All 40 rules tests passed, including a script rerun with an isolated override after configuration cleanup. Coverage includes private grants, ownership, verification, archives, immutable snapshots/reports, legacy Storage protection, optional paired ImageKit metadata, ten-photo records, required fields, and UTF16 bounds. This includes a mixed record with two earlier paired photos and eight five-field photos. The updated rules are deployed and local owner/tenant workflows against live backends are verified; emulator results alone do not establish complete production readiness.
 
-When emulators are already running with `--project demo-rental-rules`, use `npx vitest run --config vitest.rules.config.mts` directly rather than starting another instance. Stop the manual app's `demo-rental-inventory` emulator instance before starting the rules suite on the same ports; export its demo data first if you want to keep it. Storage rules perform Firestore lookups, so the test project ID must match the emulator CLI's project ID for cross-service checks. Separate projects alone do not isolate those cross-service lookups within one running Storage emulator.
+Parallel Storage emulators need separate ports and process `TEMP`/`TMP`; the CLI otherwise shares temporary blobs. On this workspace, the isolated config is ignored at `.firebase/security-emulators.json`:
 
-Avoid parallel Storage emulator instances even on different ports: Firebase CLI 15.33 uses a shared temporary blob directory, which an instance removes on shutdown. Separate instances need separate process `TEMP`/`TMP` directories.
+```powershell
+$env:PATH = 'D:\Java\bin;' + $env:PATH
+$env:RULES_FIRESTORE_PORT = '8180'
+$env:RULES_STORAGE_PORT = '9299'
+$testTemp = Join-Path (Get-Location) '.firebase/imagekit-rules-temp'
+New-Item -ItemType Directory -Path $testTemp -Force | Out-Null
+$env:TEMP = $testTemp
+$env:TMP = $testTemp
+pnpm exec firebase emulators:exec --config .firebase/security-emulators.json --project demo-rental-rules --only firestore,storage "pnpm exec vitest run --config vitest.rules.config.mts"
+```
 
-Unit tests, lint, and a production build are separate checks. Emulator tests validate deployed-rule behavior, not billing, production domain setup, email delivery, real-camera behavior, or production Storage integration. Perform those checks in a configured Firebase project before deployment.
-
-See [database-design.md](database-design.md) for retained images, download-URL access, archival semantics, and the boundaries of browser-only integrity checks.
-
-Firebase references: [email/password authentication](https://firebase.google.com/docs/auth/web/password-auth), [Storage setup](https://firebase.google.com/docs/storage/web/start), [emulator installation](https://firebase.google.com/docs/emulator-suite/install_and_configure), [rule unit testing](https://firebase.google.com/docs/rules/unit-tests).
+Use default ports if that local config is absent. Firestore/Storage must share the test project ID for cross-service lookups. Emulator tests do not verify production email, billing, image hosting, domains, or deployed browser behavior.

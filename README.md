@@ -1,42 +1,36 @@
-# Rental Inventory Management — MVP v0.1.0
+# Keyline Rental Inventory Management
 
-Keyline is a responsive rental inventory application for landlords and tenants. Organize properties and rooms, record household items and photographs, and preserve a clear record of each rental handover.
+Keyline helps landlords and tenants manage properties, rooms, household inventory, photographs, tenancies, handovers, and damage reports.
 
-This is the first frozen MVP baseline, identified by the annotated Git tag `v0.1.0-mvp`. See [release notes](docs/release-v0.1.0.md) for verification, limitations, and production requirements. Future development should use new branches and preserve this historical tag.
+The frozen MVP is `v0.1.0-mvp` at `5de01de`, published on `main` in the private [GitHub repository](https://github.com/TeoMichael/rental-inventory-management). The `chore/free-production-infrastructure` migration branch replaces new Firebase Storage uploads with ImageKit and prepares full Next.js hosting on Cloudflare Workers Free. The local ImageKit integration phase is complete: owner and verified tenant uploads, inventory, handovers, confirmation, damage reports and access revocation passed against live Firebase/ImageKit through the local production build. Updated rules are deployed and accept ten photos in the frozen metadata format; earlier paired metadata remains compatible. Cloudflare authentication/deployment, verification on the deployed URL, merge to main, and `v0.1.1` remain pending. See [production deployment](docs/production-deployment.md).
 
 ## Stack
 
-Next.js 16.4 App Router, React, TypeScript, Tailwind CSS 4, Firebase Authentication, Cloud Firestore, and Firebase Storage. Firebase is accessed through a small typed repository layer; Security Rules enforce access independently of the UI.
+Next.js 16.4 App Router, React, TypeScript, Tailwind CSS 4, Firebase Authentication, and Cloud Firestore. The migration adds a private ImageKit upload proxy and OpenNext 1.20.10 for Cloudflare Workers. Firestore Security Rules continue to protect ownership, verified tenant access, and immutable history independently of the UI.
 
 ## Local setup
 
-Use Node.js 24 LTS (Node 20.9 or newer is supported by Next.js). The repository includes a pnpm lockfile for reproducible installation:
+Use Node.js 24 and the committed pnpm lockfile:
 
 ```sh
 pnpm install --frozen-lockfile
 cp .env.example .env.local
+cp .dev.vars.example .dev.vars
 pnpm dev
 ```
 
-If using npm instead, run `npm install` and `npm run dev`. Open http://127.0.0.1:3000. Actual environment files are excluded from Git.
+Open http://127.0.0.1:3000. Fill `.env.local` with **public Firebase Web configuration only**. Put ImageKit runtime settings in ignored `.dev.vars`; `pnpm dev` loads them into the development process. Without ImageKit configuration, inventory works but uploads report that they are unavailable. Without Firebase configuration, the app displays setup instructions.
 
-Fill in the `NEXT_PUBLIC_FIREBASE_*` values using your Firebase web-app configuration. Enable Email/Password Authentication, Firestore, and Storage, then deploy the included rules and indexes. See [Firebase setup](docs/firebase-setup.md) for exact steps and a local Emulator Suite configuration that needs no live credentials.
+Never put private ImageKit values in any `.env*` file: OpenNext copies those values into Worker build output. Production uses Cloudflare runtime secrets. Build in a process without `IMAGEKIT_PRIVATE_KEY`; the Cloudflare preflight rejects a nonempty private key in `.env*` or the build process. See [Firebase setup](docs/firebase-setup.md) and [deployment setup](docs/production-deployment.md).
 
-Without Firebase configuration the app displays setup instructions. With the emulator flag enabled, accounts and records stay in the local demo project. A successful unconfigured build does not prove a live Firebase connection.
+## Implemented workflows
 
-## Implemented MVP
-
-- Registration, login, logout, password reset, landlord/tenant roles, and tenant email verification.
-- Property, room, and inventory create/read/update/delete workflows. Deletion archives records to preserve history.
-- Category, condition, quantity, estimated value, search, and room/property filters.
-- Multiple image uploads, previews, mobile camera input, and soft photo removal.
-- Responsive navigation, mobile inventory cards, validation, empty states, and request errors.
-- Tenancy creation/editing, status filters, contact details, and historical agreements.
-- Immutable check-in/check-out item snapshots, verified tenant confirmation, and before/after comparison with changes highlighted.
-- Tenant damage reports with supporting photographs, landlord status updates, notes, and status filters.
-- Live dashboard counts, pending actions, recent activity, and property summaries scoped to the signed-in role.
-
-See [development progress](docs/development-progress.md) for phase commits and verification results.
+- Registration, login/logout, password reset, landlord/tenant roles, and tenant email verification.
+- Property, room, and item management with safe archives, categories, conditions, values, search, and filters.
+- Multiple photos, previews, mobile camera input, and metadata removal retaining historical originals.
+- Tenancies, immutable check-in/check-out snapshots, tenant confirmation, and before/after comparison.
+- Tenant damage reports with evidence, landlord statuses/notes, and role-scoped dashboards.
+- Responsive navigation, validation, empty states, errors, and reconnect/retry handling.
 
 ## Verification
 
@@ -46,43 +40,24 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm test:rules
+pnpm cloudflare:build
+pnpm cloudflare:preview
 ```
 
-The corresponding `npm run` commands run the same scripts. Rule tests require Java 21+ and available emulator ports. Stop or isolate a running manual demo before starting the rules suite; see [Firebase setup](docs/firebase-setup.md). The release verification passed all five scripts with 26 domain/service tests and 17 authorization tests.
+The frozen release passed all original five checks: 26 domain/service tests and 17 authorization tests. Migration checks passed lint, TypeScript, the Next.js production build, 96 application tests and 40 Firestore/legacy Storage rules tests: **136 tests passed**. The rules script passed again after configuration cleanup. Coverage includes ten five-field photos across workflows and two earlier paired photos mixed with eight new-format photos. Live requests saved/read back two and ten mixed photos and denied malformed metadata. Owner handovers retained all snapshot thumbnails after photo detachment. A registered, email-verified tenant accessed assigned records, confirmed check-in and saved/reloaded real supporting evidence. The owner's Repairing status and note remained visible after tenancy completion, while live inventory cleared and uploads were denied. All 37 fresh live security/retention checks passed, including forbidden writes, immutable roles, cross-owner denial and invalid/oversized upload rejection. Mobile comparison/forms/report history fit the viewport, and photo/camera inputs are enabled; actual device capture remains unverified. Native Windows OpenNext packaging failed on a symlink; no Worker preview or deployment exists. Linux packaging, deployed email/domain workflows and Cloudflare limits remain pending.
 
-## Project structure
-
-```text
-src/app/                 App Router pages and global styles
-src/components/          Authentication, navigation, forms, and feature screens
-src/lib/                 Domain types, validation, formatting, Firebase repository
-tests/                   Domain and Firebase authorization tests
-docs/                    Setup, database decisions, and phase tracking
-firestore.rules          Private record access and validation
-storage.rules            Image access and append-only evidence
-```
+Rule tests require Java 21+. `pnpm test:rules` uses `firebase.emulators.json` to retain historical Storage rules and emulator checks. Production `firebase.json` contains Auth/Firestore configuration only, and the active application no longer initializes the Storage SDK. Separate concurrent Storage emulators with different ports **and** process `TEMP`/`TMP` directories. See [Firebase setup](docs/firebase-setup.md).
 
 ## Data and retention
 
-Landlords access records by immutable owner ID. Tenant access requires a verified matching email. Inspections store independent snapshots; changing live inventory cannot rewrite a handover. Photo removal detaches metadata while retaining original files for inspection evidence. See [database design](docs/database-design.md) for query choices, access boundaries, and retention limitations.
+Landlords access records by immutable owner ID; tenants need a verified matching email. Private property grants hide other invitation emails. Independent inspection snapshots survive live edits. Completed tenancies retain historical records while losing live inventory access.
 
-## Project status
+New uploads use `/api/photos`. The server validates the Firebase account and reads authorization records under the user's token before uploading to a controlled ImageKit path. Responses retain the frozen `{id, path, name, url, createdAt}` format; ImageKit's file ID is validated on the server and is not persisted for new uploads. Earlier verification records with paired provider/file ID metadata remain compatible. JPEG, PNG, and WebP files are limited to 8 MiB each and ten photos per record. Removal detaches metadata; originals and partial uploads remain. CDN URLs are public capabilities: anyone holding one can retrieve the image after tenancy access ends. Legacy Firebase photos depend on the original bucket and URLs remaining available. See [database design](docs/database-design.md).
 
-All four MVP phase commits are preserved on local `main`. Release finalization changes documentation only; application behavior and dependencies are frozen for v0.1.0. GitHub pushes require a remote URL and available GitHub authentication. Production Firebase validation requires the project's public Web configuration; current browser verification uses local emulators.
+## Free infrastructure and remaining limits
 
-## Known limitations
+Production Firebase Authentication and default Firestore are on Spark, with no linked billing account. ImageKit and Cloudflare must remain on free plans; no card, paid binding, or automatic upgrade is authorized. Quotas can stop service. ImageKit's 3 GB storage/20 GB monthly bandwidth and Workers Free's 100,000 daily requests/10 ms CPU allowance require real workload verification. Sources and scope are in [production deployment](docs/production-deployment.md).
 
-- Deletion archives records; there is no restore interface or automatic storage cleanup. Removing a photo keeps historical evidence. Failed or canceled forms can leave unattached Storage files.
-- One immutable check-in and one check-out are supported per tenancy, with at most 400 inventory records in each inspection.
-- Tenancy email/property are fixed after creation. Statuses and dates are managed manually. Email is required to link a tenant account.
-- Tenant access requires a verified matching email. Previously obtained Firebase download URLs remain usable by anyone holding the URL.
-- The client supplies timestamps and snapshot text; trusted audit timestamps, complete server-side snapshot enforcement, and expiring image links require a backend.
-- Production email delivery, domain setup, Storage integration, and real mobile camera capture need verification in a configured Firebase project.
+Archives have no restore interface or automatic cleanup. Each tenancy supports one check-in/check-out pair with at most 400 items. Tenancy email/property are fixed; statuses/dates are manual. Client timestamps and complete snapshot counts are not trusted server audit guarantees. Deployed email action URLs, authorized domains, and real mobile camera capture still need verification.
 
-These choices and access boundaries are explained in [database design](docs/database-design.md).
-
-## Future improvements
-
-QR inventory labels, PDF handover reports, maintenance history, email notifications, a PWA, inventory templates, and richer before/after comparisons. These are outside the MVP scope.
-
-No future features, AI functionality, redesign, or additional refactoring are part of this release.
+See [development progress](docs/development-progress.md) and the historical [v0.1.0 release notes](docs/release-v0.1.0.md). QR labels, PDF reports, notifications, PWA support, templates, and AI remain outside this migration.
