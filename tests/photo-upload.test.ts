@@ -17,6 +17,8 @@ const state = {
   imageOverrides: {} as Record<string, unknown>,
   documentStatus: 200,
   accountStatus: 200,
+  imageForms: [] as FormData[],
+  imageBodyLengths: [] as number[],
 };
 
 function token(overrides: Record<string, unknown> = {}): string {
@@ -65,7 +67,12 @@ const fetchMock = vi.fn(
       });
     }
     if (url === "https://upload.imagekit.io/api/v1/files/upload") {
-      const form = init.body as FormData;
+      const encoded = await new Response(init.body).arrayBuffer();
+      state.imageBodyLengths.push(encoded.byteLength);
+      const form = await new Response(encoded, {
+        headers: init.headers,
+      }).formData();
+      state.imageForms.push(form);
       const path = `${form.get("folder")}/${form.get("fileName")}`;
       return Response.json(
         {
@@ -169,6 +176,8 @@ beforeEach(() => {
   state.imageOverrides = {};
   state.documentStatus = 200;
   state.accountStatus = 200;
+  state.imageForms = [];
+  state.imageBodyLengths = [];
 });
 
 afterEach(() => {
@@ -178,6 +187,40 @@ afterEach(() => {
 });
 
 describe("photo upload authorization", () => {
+  it("preserves a chunked binary image in a length-correct multipart request", async () => {
+    const bytes = new Uint8Array(65_541);
+    bytes.set(PNG);
+    for (let i = PNG.length; i < bytes.length; i++) bytes[i] = i % 256;
+    const source = request();
+    const response = await POST(
+      new Request(source.url, {
+        method: "POST",
+        headers: source.headers,
+        body: new ReadableStream({
+          start(controller) {
+            for (const chunk of [
+              bytes.slice(0, 3),
+              bytes.slice(3, 9),
+              bytes.slice(9),
+            ])
+              controller.enqueue(chunk);
+            controller.close();
+          },
+        }),
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(response.status).toBe(200);
+    const file = state.imageForms[0].get("file") as File;
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+    const outgoing = imageRequests()[0];
+    expect(
+      Number(new Headers(outgoing.init.headers).get("Content-Length")),
+    ).toBe(state.imageBodyLengths[0]);
+    expect(file.type).toBe("image/png");
+    expect(state.imageForms[0].get("fileName")).toBe(file.name);
+  });
+
   it("keeps credentials out of upstream failure diagnostics and responses", async () => {
     const bearer = token();
     const encodedKey = btoa(`${PRIVATE_KEY}:`);
@@ -228,7 +271,7 @@ describe("photo upload authorization", () => {
     expect(new Headers(outgoing.init.headers).get("Authorization")).toBe(
       `Basic ${btoa(`${PRIVATE_KEY}:`)}`,
     );
-    const form = outgoing.init.body as FormData;
+    const form = state.imageForms[0];
     expect(form.get("folder")).toBe("/properties/property-1/owner-1");
     expect(form.get("fileName")).toBe(photo.id);
     expect(form.get("overwriteFile")).toBe("false");
@@ -372,9 +415,7 @@ describe("binary upload boundaries and retention", () => {
     const bytes = new Uint8Array(MAX_BYTES);
     bytes.set(PNG);
     expect((await POST(request({ bytes }))).status).toBe(200);
-    expect(
-      ((imageRequests()[0].init.body as FormData).get("file") as Blob).size,
-    ).toBe(MAX_BYTES);
+    expect((state.imageForms[0].get("file") as Blob).size).toBe(MAX_BYTES);
   });
 
   it("rejects an oversized stream without Content-Length before ImageKit receives bytes", async () => {

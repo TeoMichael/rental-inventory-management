@@ -360,7 +360,7 @@ function imageMime(header: Uint8Array, length: number): MimeType | undefined {
     return "image/webp";
 }
 
-async function readPhoto(request: Request, mime: MimeType): Promise<Blob> {
+async function readPhoto(request: Request, mime: MimeType) {
   const declaredSize = request.headers.get("Content-Length");
   if (
     declaredSize !== null &&
@@ -399,7 +399,51 @@ async function readPhoto(request: Request, mime: MimeType): Promise<Blob> {
       400,
       "Photos must be JPEG, PNG, or WebP images matching their file type.",
     );
-  return new Blob(chunks, { type: mime });
+  return { chunks, size: total };
+}
+
+function multipartPhoto(
+  file: { chunks: Uint8Array<ArrayBuffer>[]; size: number },
+  mime: MimeType,
+  id: string,
+  folder: string,
+) {
+  const boundary = `keyline-${crypto.randomUUID()}`;
+  const encode = new TextEncoder();
+  const start = encode.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${id}"\r\nContent-Type: ${mime}\r\n\r\n`,
+  );
+  const values = {
+    fileName: id,
+    folder,
+    useUniqueFileName: "false",
+    overwriteFile: "false",
+  };
+  const end = encode.encode(
+    "\r\n" +
+      Object.entries(values)
+        .map(
+          ([name, value]) =>
+            `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+        )
+        .join("") +
+      `--${boundary}--\r\n`,
+  );
+  // The complete bounded file was validated before constructing this stream.
+  // Reuse those bytes instead of serializing a Blob through FormData again.
+  const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+    start(controller) {
+      controller.enqueue(start);
+      for (const chunk of file.chunks) controller.enqueue(chunk);
+      controller.enqueue(end);
+      controller.close();
+    },
+  });
+  return {
+    body,
+    contentType: `multipart/form-data; boundary=${boundary}`,
+    length: start.byteLength + file.size + end.byteLength,
+  };
 }
 
 async function uploadPhoto(request: Request): Promise<Photo> {
@@ -451,19 +495,26 @@ async function uploadPhoto(request: Request): Promise<Photo> {
   const file = await readPhoto(request, mime as MimeType);
   const id = crypto.randomUUID();
   const path = `properties/${propertyId}/${uid}/${id}`;
-  const body = new FormData();
-  body.append("file", file, id);
-  body.append("fileName", id);
-  body.append("folder", `/properties/${propertyId}/${uid}`);
-  body.append("useUniqueFileName", "false");
-  body.append("overwriteFile", "false");
+  const multipart = multipartPhoto(
+    file,
+    mime as MimeType,
+    id,
+    `/properties/${propertyId}/${uid}`,
+  );
+  const uploadRequest: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${btoa(`${config.privateKey}:`)}`,
+      "Content-Type": multipart.contentType,
+      "Content-Length": String(multipart.length),
+    },
+    body: multipart.body,
+    // Node requires this for stream bodies; Workers accepts the same request.
+    duplex: "half",
+  };
   const response = await fetchService(
     IMAGEKIT_UPLOAD_URL,
-    {
-      method: "POST",
-      headers: { Authorization: `Basic ${btoa(`${config.privateKey}:`)}` },
-      body,
-    },
+    uploadRequest,
     "imagekit",
   );
   if (!response.ok)
