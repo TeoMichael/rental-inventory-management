@@ -1,8 +1,10 @@
 # Rental Inventory Management MVP
 
-Version: **v0.1.0** · Date: **9 October 2026** · Annotated tag: **`v0.1.0-mvp`**
+Version: **v0.1.0** · Date: **9 October 2026** · Annotated tag: **`v0.1.0-mvp`** · Commit: **`5de01de`**
 
 The first frozen MVP baseline preserves all four development phase commits. Release finalization changes documentation only; no application code, dependencies, tests, product features, redesign, or refactoring were added.
+
+The scope and verification below describe this historical release. The separate `chore/free-production-infrastructure` branch replaces new images with ImageKit and verifies free hosting. Fresh checks pass lint, TypeScript, Next build, 109 application tests and all 40 rules regressions. Production Storage is no longer required. Public Cloudflare workflows pass, but near-limit uploads exceed Workers Free CPU (13/14 ms against 10 ms), so it is not the accepted final host and its automatic builds are disabled. [The Render Free application](https://keyline-rental-inventory.onrender.com) is live on a Singapore Node service with migration production verification complete: owner/tenant uploads, new report persistence, repair notes, completed-tenancy revocation/retention, security/history/evidence checks and public-resource inspection pass. Earlier registration and handover creation/confirmation evidence is reused from Cloudflare. The approved ImageKit credential is saved privately in the Render service environment, and its Firebase Auth hostname preserves prior domains. Main merge, deployment from main and annotated `v0.1.1` remain pending. Render retains idle sleep, shared quota, no-card suspension and unmeasured exact CPU/memory usage limitations; reset-link delivery/action and actual device camera capture remain unverified. Real Firebase email verification previously passed for the tenant; email actions were not rechecked after the Render deployment. This migration does not move or rewrite `v0.1.0-mvp`. See [current deployment status](production-deployment.md).
 
 ## Implemented MVP
 
@@ -41,7 +43,7 @@ See [database design](database-design.md) for exact integrity and retention boun
 
 ## Firebase production requirements
 
-Provide public web-app environment settings; enable Email/Password Authentication, Firestore, and the appropriate Storage bucket/billing plan. Deploy the included rules/indexes, await index readiness, configure authorized domains, and disable emulators. Verify both roles, email verification, uploads, and deployed access rules before production use. Never commit local environment values or admin credentials. See [Firebase setup](firebase-setup.md).
+The frozen release required public Web settings, Email/Password Authentication, Firestore, and its Firebase Storage bucket/billing setup, followed by rules/index deployment, domain setup, and production role/email/upload checks. These were unverified at the release checkpoint. The active migration replaces that production Storage dependency with ImageKit while keeping Auth/Firestore on Spark without billing; follow the [current setup](firebase-setup.md) and [deployment guide](production-deployment.md), not a paid Storage upgrade.
 
 ## Future improvements
 
@@ -49,12 +51,6 @@ QR inventory labels, PDF handover reports, maintenance history, email notificati
 
 ## GitHub publication
 
-No remote is configured. The release commit on `main` and annotated tag are finalized locally; neither has been pushed. After GitHub authentication, substitute your actual repository URL:
+The original freeze happened before a remote was configured. The baseline `main` at `5de01de` is now published in the private [rental-inventory-management repository](https://github.com/TeoMichael/rental-inventory-management). The annotated `v0.1.0-mvp` tag continues to identify that same commit and must never be moved or overwritten. Active infrastructure work remains on its own branch. Render migration production verification is complete; main merge, deployment from main and annotated `v0.1.1` remain pending.
 
-```sh
-git remote add origin "YOUR_GITHUB_REPOSITORY_URL"
-git push origin main
-git push origin v0.1.0-mvp
-```
-
-If authentication requests 2FA, a passkey, or browser approval, complete that user-controlled step before retrying. Do not bypass it or create replacement credentials.
+User-controlled 2FA, passkey, or browser approval remains an authentication checkpoint; do not bypass it or create replacement credentials.

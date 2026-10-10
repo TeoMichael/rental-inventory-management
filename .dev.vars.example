@@ -1,0 +1,4 @@
+# Copy to ignored .dev.vars for local Next.js/Cloudflare preview only.
+# Production values belong in Wrangler secrets. Never use NEXT_PUBLIC_ here.
+IMAGEKIT_PRIVATE_KEY=
+IMAGEKIT_URL_ENDPOINT=

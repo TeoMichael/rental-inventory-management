@@ -5,24 +5,18 @@ import {
   getFirestore,
   type Firestore,
 } from "firebase/firestore";
-import {
-  connectStorageEmulator,
-  getStorage,
-  type FirebaseStorage,
-} from "firebase/storage";
 
 const config = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim(),
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim(),
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim(),
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim(),
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim(),
 };
 
 export const firebaseConfigured = Object.values(config).every((value) =>
   Boolean(value?.trim()),
 );
-type FirebaseServices = { auth: Auth; db: Firestore; storage: FirebaseStorage };
+type FirebaseServices = { auth: Auth; db: Firestore };
 const shared = globalThis as typeof globalThis & {
   __rentalFirebase?: FirebaseServices;
 };
@@ -40,14 +34,12 @@ export function getFirebase(): FirebaseServices {
   const services = {
     auth: getAuth(app),
     db: getFirestore(app),
-    storage: getStorage(app),
   };
   if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === "true") {
     connectAuthEmulator(services.auth, "http://127.0.0.1:9099", {
       disableWarnings: true,
     });
     connectFirestoreEmulator(services.db, "127.0.0.1", 8080);
-    connectStorageEmulator(services.storage, "127.0.0.1", 9199);
   }
   shared.__rentalFirebase = services;
   return services;

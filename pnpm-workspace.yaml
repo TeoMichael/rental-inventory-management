@@ -1,5 +1,14 @@
 allowBuilds:
   '@firebase/util': true
+  esbuild: true
   protobufjs: true
   re2: false
   unrs-resolver: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - '@opennextjs/aws@4.1.9'
+  - '@opennextjs/cloudflare@1.20.10'
+  - miniflare@5.20261006.1-alpha
+  - wrangler@4.149.0
+patchedDependencies:
+  '@opennextjs/cloudflare@1.20.10': patches/@opennextjs__cloudflare@1.20.10.patch

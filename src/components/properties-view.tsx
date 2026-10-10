@@ -182,7 +182,7 @@ export default function PropertiesView() {
             return (
               <Link
                 className="property-card"
-                href={`/properties/${p.id}`}
+                href={`/properties/detail?id=${encodeURIComponent(p.id)}`}
                 key={p.id}
               >
                 <div className={`property-art art-${index % 4}`}>

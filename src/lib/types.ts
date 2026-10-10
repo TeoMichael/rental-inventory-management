@@ -64,6 +64,8 @@ export interface Photo {
   path: string;
   name: string;
   createdAt: string;
+  provider?: "imagekit";
+  fileId?: string;
 }
 export interface Item extends BaseRecord {
   propertyId: string;

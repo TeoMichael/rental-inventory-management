@@ -9,6 +9,22 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const timestamp = "2026-10-09T00:00:00.000Z";
 const tenantEmail = "tenant@example.com";
+const legacyPhoto = {
+  id: "photo-a",
+  url: "https://example.com/legacy-photo.jpg",
+  path: "properties/property-a/owner-a/photo-a",
+  name: "photo.jpg",
+  createdAt: timestamp,
+};
+const imagekitUploadPhoto = {
+  ...legacyPhoto,
+  url: "https://ik.imagekit.io/rental/photo.jpg",
+};
+const imagekitPhoto = {
+  ...imagekitUploadPhoto,
+  provider: "imagekit",
+  fileId: "imagekit-file-a",
+};
 let environment: RulesTestEnvironment;
 const base = (id: string, ownerId = "owner-a") => ({
   id,
@@ -374,6 +390,328 @@ describe("private membership and archived inventory", () => {
     );
     await assertSucceeds(db.doc("items/item-a").get());
     await assertSucceeds(db.doc("rooms/room-a").get());
+  });
+});
+
+describe("photo metadata compatibility", () => {
+  it.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+    "saves %i ImageKit photos in atomic inventory writes and updates",
+    async (count) => {
+      const db = ownerDb();
+      const photos = Array.from({ length: count }, (_, index) => ({
+        ...imagekitUploadPhoto,
+        id: `photo-${index}`,
+        path: `properties/property-a/owner-a/photo-${index}`,
+      }));
+      const record = { ...item("item-multiple"), photos };
+      const batch = db.batch();
+      batch.set(db.doc(`items/${record.id}`), record);
+      batch.update(db.doc("rooms/room-a"), { updatedAt: timestamp });
+      await assertSucceeds(batch.commit());
+      await assertSucceeds(db.doc(`items/${record.id}`).update({ photos }));
+      const saved = await assertSucceeds(
+        tenantDb().doc(`items/${record.id}`).get(),
+      );
+      expect(saved.data()?.photos).toEqual(photos);
+    },
+  );
+
+  it("validates the tenth photo and rejects an eleventh without losing valid metadata", async () => {
+    const reference = ownerDb().doc("items/item-a");
+    const photos = Array.from({ length: 10 }, () => ({
+      ...imagekitUploadPhoto,
+    }));
+    await assertSucceeds(reference.update({ photos }));
+    for (const invalid of [
+      { ...imagekitPhoto, fileId: null },
+      { ...imagekitPhoto, fileId: " " },
+      { ...imagekitPhoto, provider: "other" },
+      { ...imagekitPhoto, unexpected: true },
+      { ...imagekitPhoto, path: "properties/property-b/owner-a/photo-a" },
+      { ...imagekitPhoto, name: "a".repeat(256) },
+    ]) {
+      await assertFails(
+        reference.update({ photos: [...photos.slice(0, 9), invalid] }),
+      );
+    }
+    await assertFails(reference.update({ photos: [...photos, imagekitPhoto] }));
+    expect((await assertSucceeds(reference.get())).data()?.photos).toEqual(
+      photos,
+    );
+  });
+
+  it("retains ten ImageKit photos in immutable handovers and tenant damage reports", async () => {
+    const db = ownerDb();
+    const photos = Array.from({ length: 10 }, () => ({
+      ...imagekitUploadPhoto,
+    }));
+    for (const type of ["check-in", "check-out"]) {
+      const parent = inspection(type);
+      const child = { ...snapshot(type), photos };
+      const batch = db.batch();
+      batch.set(db.doc(`inspections/${parent.id}`), parent);
+      batch.set(db.doc(`inspectionItems/${child.id}`), child);
+      await assertSucceeds(batch.commit());
+      expect(
+        (
+          await assertSucceeds(
+            tenantDb().doc(`inspectionItems/${child.id}`).get(),
+          )
+        ).data()?.photos,
+      ).toEqual(photos);
+      await assertFails(
+        db.doc(`inspectionItems/${child.id}`).update({ photos: [] }),
+      );
+    }
+    const tenantPhotos = photos.map((photo) => ({
+      ...photo,
+      path: "properties/property-a/tenant-a/photo-a",
+    }));
+    await assertSucceeds(
+      tenantDb()
+        .doc("damageReports/report-a")
+        .set({ ...report(), photos: tenantPhotos }),
+    );
+    await assertSucceeds(
+      db
+        .doc("damageReports/report-a")
+        .update({ status: "Repairing", ownerNotes: "Evidence retained" }),
+    );
+    expect(
+      (
+        await assertSucceeds(tenantDb().doc("damageReports/report-a").get())
+      ).data()?.photos,
+    ).toEqual(tenantPhotos);
+    await assertFails(db.doc("damageReports/report-a").update({ photos: [] }));
+  });
+
+  it("accepts legacy and paired ImageKit metadata while rejecting malformed, extra, foreign, or excessive metadata", async () => {
+    const reference = ownerDb().doc("items/item-a");
+    await assertSucceeds(
+      reference.update({ photos: [legacyPhoto, imagekitPhoto] }),
+    );
+    const saved = await assertSucceeds(tenantDb().doc("items/item-a").get());
+    expect(saved.data()?.photos).toEqual([legacyPhoto, imagekitPhoto]);
+    const invalid = [
+      { ...legacyPhoto, provider: "imagekit" },
+      { ...legacyPhoto, fileId: "file-only" },
+      { ...imagekitPhoto, provider: "another-service" },
+      { ...imagekitPhoto, fileId: null },
+      { ...imagekitPhoto, fileId: 123 },
+      { ...imagekitPhoto, fileId: "" },
+      { ...imagekitPhoto, fileId: " \t\n" },
+      { ...imagekitPhoto, fileId: "a".repeat(129) },
+      { ...imagekitPhoto, unexpected: true },
+      { ...imagekitPhoto, path: "properties/property-b/owner-a/photo-a" },
+    ];
+    for (const forged of invalid)
+      await assertFails(reference.update({ photos: [forged] }));
+    await assertFails(
+      reference.update({
+        photos: Array.from({ length: 11 }, () => imagekitPhoto),
+      }),
+    );
+    await assertSucceeds(
+      reference.update({
+        photos: [{ ...imagekitPhoto, fileId: "a".repeat(128) }],
+      }),
+    );
+  });
+
+  it("rejects a replaced mandatory photo field even when the field count is unchanged", async () => {
+    const reference = ownerDb().doc("items/item-a");
+    for (const original of [legacyPhoto, imagekitPhoto]) {
+      for (const key of Object.keys(original)) {
+        const forged: Record<string, unknown> = {
+          ...original,
+          unexpected: true,
+        };
+        delete forged[key];
+        await assertFails(reference.update({ photos: [forged] }));
+      }
+    }
+    const multiline = {
+      ...legacyPhoto,
+      id: "photo\nidentifier",
+      name: "Photo\nname.jpg",
+      path: "properties/property-a/owner\nidentifier/photo\nidentifier",
+    };
+    await assertSucceeds(reference.update({ photos: [multiline] }));
+  });
+
+  it("keeps UTF16 photo limits with astral characters across all ten entries", async () => {
+    const reference = ownerDb().doc("items/item-a");
+    const id = "😀".repeat(64);
+    const uploader = "😀".repeat(64);
+    const complete = {
+      ...imagekitUploadPhoto,
+      id,
+      name: "😀".repeat(127) + "a",
+      path: `properties/property-a/${uploader}/${id}`,
+    };
+    const photos = Array.from({ length: 10 }, () => ({ ...complete }));
+    await assertSucceeds(reference.update({ photos }));
+    await assertSucceeds(reference.update({ name: "😀".repeat(100) }));
+    await assertFails(reference.update({ name: "😀".repeat(101) }));
+    for (const invalid of [
+      { ...complete, name: "😀".repeat(128) },
+      { ...complete, id: id + "a", path: `${complete.path}a` },
+      { ...complete, path: `properties/property-a/${uploader}a/${id}` },
+    ]) {
+      await assertFails(
+        reference.update({ photos: [...photos.slice(0, 9), invalid] }),
+      );
+    }
+  });
+
+  it("preserves earlier provider metadata alongside ten new-format photos", async () => {
+    const db = ownerDb();
+    const photos = [
+      imagekitPhoto,
+      imagekitPhoto,
+      ...Array.from({ length: 8 }, () => ({ ...imagekitUploadPhoto })),
+    ];
+    await assertSucceeds(db.doc("items/item-a").update({ photos }));
+    const parent = inspection();
+    const child = { ...snapshot(), photos };
+    const batch = db.batch();
+    batch.set(db.doc(`inspections/${parent.id}`), parent);
+    batch.set(db.doc(`inspectionItems/${child.id}`), child);
+    await assertSucceeds(batch.commit());
+    await assertSucceeds(
+      tenantDb()
+        .doc("damageReports/report-a")
+        .set({ ...report(), photos }),
+    );
+    expect(
+      (
+        await assertSucceeds(
+          tenantDb().doc(`inspectionItems/${child.id}`).get(),
+        )
+      ).data()?.photos,
+    ).toEqual(photos);
+  });
+
+  it("preserves ImageKit snapshot metadata after detachment and forbids later photo changes", async () => {
+    const db = ownerDb();
+    await assertSucceeds(
+      db.doc("items/item-a").update({ photos: [imagekitPhoto] }),
+    );
+    const parent = inspection();
+    const child = { ...snapshot(), photos: [imagekitPhoto] };
+    const batch = db.batch();
+    batch.set(db.doc(`inspections/${parent.id}`), parent);
+    batch.set(db.doc(`inspectionItems/${child.id}`), child);
+    await assertSucceeds(batch.commit());
+    await assertSucceeds(db.doc("items/item-a").update({ photos: [] }));
+    await assertSucceeds(
+      db.doc("propertyAccess/property-a").update({ tenantEmails: [] }),
+    );
+    const historical = await assertSucceeds(
+      tenantDb().doc(`inspectionItems/${child.id}`).get(),
+    );
+    expect(historical.data()?.photos).toEqual([imagekitPhoto]);
+    await assertFails(
+      db.doc(`inspectionItems/${child.id}`).update({ photos: [] }),
+    );
+    await assertFails(
+      tenantDb()
+        .doc(`inspectionItems/${child.id}`)
+        .update({ photos: [{ ...imagekitPhoto, fileId: "replacement" }] }),
+    );
+  });
+
+  it("rejects cross-property metadata in atomic snapshots and tenant reports", async () => {
+    const db = ownerDb();
+    const parent = inspection();
+    const foreign = {
+      ...imagekitPhoto,
+      path: "properties/property-b/tenant-a/photo-a",
+    };
+    const child = { ...snapshot(), photos: [foreign] };
+    const batch = db.batch();
+    batch.set(db.doc(`inspections/${parent.id}`), parent);
+    batch.set(db.doc(`inspectionItems/${child.id}`), child);
+    await assertFails(batch.commit());
+    const absent = await assertSucceeds(
+      db.doc(`inspections/${parent.id}`).get(),
+    );
+    expect(absent.exists).toBe(false);
+    await assertFails(
+      tenantDb()
+        .doc("damageReports/report-a")
+        .set({ ...report(), photos: [foreign] }),
+    );
+    const tenantPhoto = {
+      ...imagekitPhoto,
+      path: "properties/property-a/tenant-a/photo-a",
+    };
+    await assertSucceeds(
+      tenantDb()
+        .doc("damageReports/report-a")
+        .set({ ...report(), photos: [tenantPhoto] }),
+    );
+    const saved = await assertSucceeds(db.doc("damageReports/report-a").get());
+    expect(saved.data()?.photos).toEqual([tenantPhoto]);
+  });
+
+  it("prevents tenants from writing owner inventory photo metadata", async () => {
+    const reference = ownerDb().doc("items/item-a");
+    await assertSucceeds(reference.update({ photos: [imagekitPhoto] }));
+    await assertFails(
+      tenantDb()
+        .doc("items/item-a")
+        .update({
+          photos: [{ ...imagekitPhoto, fileId: "tenant-replacement" }],
+        }),
+    );
+    await assertFails(tenantDb().doc("items/item-a").update({ photos: [] }));
+    const saved = await assertSucceeds(reference.get());
+    expect(saved.data()?.photos).toEqual([imagekitPhoto]);
+  });
+});
+
+describe("required record fields", () => {
+  it("rejects replaced item fields and extra fields while allowing the complete record", async () => {
+    const reference = ownerDb().doc("items/item-a");
+    const complete = item("item-a");
+    await assertSucceeds(reference.set(complete));
+    for (const key of Object.keys(complete)) {
+      const forged: Record<string, unknown> = { ...complete, unexpected: true };
+      delete forged[key];
+      await assertFails(reference.set(forged));
+    }
+    await assertFails(reference.set({ ...complete, unexpected: true }));
+  });
+
+  it("rejects replaced snapshot fields without committing the parent handover", async () => {
+    const db = ownerDb();
+    const parent = inspection();
+    const complete = snapshot();
+    for (const key of Object.keys(complete)) {
+      const forged: Record<string, unknown> = { ...complete, unexpected: true };
+      delete forged[key];
+      const batch = db.batch();
+      batch.set(db.doc(`inspections/${parent.id}`), parent);
+      batch.set(db.doc(`inspectionItems/${complete.id}`), forged);
+      await assertFails(batch.commit());
+    }
+    expect(
+      (await assertSucceeds(db.doc(`inspections/${parent.id}`).get())).exists,
+    ).toBe(false);
+    await createHandover();
+  });
+
+  it("rejects replaced damage fields and extra fields while allowing a complete report", async () => {
+    const reference = tenantDb().doc("damageReports/report-a");
+    const complete = report();
+    for (const key of Object.keys(complete)) {
+      const forged: Record<string, unknown> = { ...complete, unexpected: true };
+      delete forged[key];
+      await assertFails(reference.set(forged));
+    }
+    await assertFails(reference.set({ ...complete, unexpected: true }));
+    await assertSucceeds(reference.set(complete));
   });
 });
 

@@ -32,7 +32,9 @@ export function recentActivity(data: WorkspaceData): Activity[] {
           ? "Property updated"
           : "Property added",
       detail: property.name,
-      href: property.archived ? "/properties" : `/properties/${property.id}`,
+      href: property.archived
+        ? "/properties"
+        : `/properties/detail?id=${encodeURIComponent(property.id)}`,
       icon: Building2,
     })),
     ...data.items.map((item) => ({

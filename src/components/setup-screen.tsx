@@ -46,14 +46,14 @@ export function SetupScreen() {
             <li>
               <strong>Create a Firebase web app</strong>
               <span>
-                Enable Email/Password Authentication, Firestore, and Storage.
+                Enable Email/Password Authentication and Firestore on Spark.
               </span>
             </li>
             <li>
               <strong>Copy .env.example to .env.local</strong>
               <span>
-                Fill in all six NEXT_PUBLIC_FIREBASE values from your web app
-                settings.
+                Fill in public Firebase web settings. Keep ImageKit runtime
+                settings in .dev.vars as described in the deployment guide.
               </span>
             </li>
             <li>

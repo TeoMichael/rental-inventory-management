@@ -265,7 +265,10 @@ export function LandlordDashboard() {
                   .map((tenancy) => tenancy.tenantEmail.toLowerCase()),
               ).size;
               return (
-                <Link href={`/properties/${property.id}`} key={property.id}>
+                <Link
+                  href={`/properties/detail?id=${encodeURIComponent(property.id)}`}
+                  key={property.id}
+                >
                   <span className="room-icon shrink-0">
                     <Building2 size={22} />
                   </span>
